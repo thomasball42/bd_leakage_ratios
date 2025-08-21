@@ -1,0 +1,154 @@
+﻿Item,Item_Code,SPAM_crop_num,SPAM_name,SPAM_name_abr,GAEZres06,GAEZres04,GAEZres04_group4mean,group_name,animal_bd_name,group_name_v2,group_name_v3,group_name_v4,group_name_v5,group_name_v6,group_name_v7
+Wheat,15,1,wheat,whea,whe,whe,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Rice; paddy,27,2,rice,rice,rcw,rcw,,Grains,,Grains,Grains,Grains,Rice,Rice,"Grains, roots, starchy carbohydrates"
+Barley,44,4,barley,barl,brl,brl,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Maize,56,3,maize,maiz,mze,mze,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Oats,75,8,other cereals,ocer,oce,oat,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Quinoa,92,8,other cereals,ocer,oce,,Cereals,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+,,,,,,,,,,,,,,,
+Grain; mixed,103,8,other cereals,ocer,oce,,Cereals,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Potatoes,116,9,potato,pota,rt1,wpo,,Roots and tubers,,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,"Grains, roots, starchy carbohydrates"
+Beans; dry,176,14,bean,bean,pls,phb,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Broad beans; horse beans; dry,181,14,bean,bean,pls,,Pulses,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Peas; dry,187,19,other pulses,opul,pls,pea,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Chick peas,191,15,chickpea,chic,pls,chk,,"Legumes, nuts, and seeds",,Chickpeas,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Lentils,201,18,lentil,lent,pls,,Pulses,"Legumes, nuts, and seeds",,Lentils,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Pulses nes,211,19,other pulses,opul,pls,,Pulses,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Brazil nuts; with shell,216,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Tropical nuts,Tropical nuts,"Legumes, beans, nuts"
+Cashew nuts; with shell,217,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Tropical nuts,Tropical nuts,"Legumes, beans, nuts"
+Chestnut,220,40,temperate fruit,temf,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Temperate fruit,Temperate nuts,Temperate nuts,"Legumes, beans, nuts"
+Almonds; with shell,221,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Tropical nuts,Tropical nuts,"Legumes, beans, nuts"
+Walnuts; with shell,222,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Temperate nuts,Temperate nuts,"Legumes, beans, nuts"
+Pistachios,223,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Temperate nuts,Temperate nuts,"Legumes, beans, nuts"
+Hazelnuts; with shell,225,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Temperate nuts,Temperate nuts,"Legumes, beans, nuts"
+Areca nuts,226,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Tropical nuts,Tropical nuts,"Legumes, beans, nuts"
+Nuts nes,234,40,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Tropical nuts,Tropical nuts,"Legumes, beans, nuts"
+Soybeans,236,20,soybean,soyb,soy,soy,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Soybeans,Soybeans,"Legumes, beans, nuts"
+Groundnuts; with shell,242,21,groundnut,grou,grd,grd,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Temperate nuts,Temperate nuts,"Legumes, beans, nuts"
+Coconuts,249,22,coconut,cnut,frt,con,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Tropical fruit,Tropical fruit,Fruit and vegetables
+Oil palm fruit,254,23,oilpalm,oilp,olp,olp,,,,,Other,Other,Oilcrops,Oilcrops,
+Olives,260,40,temperate fruit,temf,olv,olv,,Vegetables,,Olives,Vegetables,Vegetables,Olives,Vegetables,Fruit and vegetables
+Sunflower seed,267,24,sunflower,sunf,sfl,sfl,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Legumes and pulses,"Legumes, beans, nuts"
+Rapeseed,270,25,rapeseed,rape,rsd,rsd,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Oilcrops,"Legumes, beans, nuts"
+Sesame seed,289,26,sesameseed,sesa,nes,,Oils,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Oilcrops,"Legumes, beans, nuts"
+Mustard seed,292,25,rapeseed,rape,nes,,Oils,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Legumes and pulses,Oilcrops,"Legumes, beans, nuts"
+Cabbages and other brassicas,358,41,vegetables,vege,veg,cab,,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Artichokes,366,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Asparagus,367,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Lettuce and chicory,372,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Spinach,373,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Tomatoes,388,41,vegetables,vege,veg,tom,,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Cauliflowers and broccoli,393,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Pumpkins; squash and gourds,394,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Cucumbers and gherkins,397,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Eggplants (aubergines),399,41,vegetables,vege,veg,,Solanaceae,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Chillies and peppers; green,401,41,vegetables,vege,veg,,Solanaceae,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Onions; shallots; green,402,41,vegetables,vege,veg,oni,,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Onions; dry,403,41,vegetables,vege,veg,oni,,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+String beans,423,14,bean,bean,veg,,Pulses,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Vegetables,Vegetables,Fruit and vegetables
+Garlic,406,41,vegetables,vege,veg,,Allium,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Leeks; other alliaceous vegetables,407,41,vegetables,vege,veg,,Allium,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Beans; green,414,14,bean,bean,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Peas; green,417,19,other pulses,opul,veg,,Peas,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Vegetables; leguminous nes,420,19,other pulses,opul,veg,,Peas,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Carrots and turnips,426,13,other roots,orts,veg,car,,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Maize; green,446,3,maize,maiz,mze,mze,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Mushrooms and truffles,449,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Vegetables; fresh nes,463,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Bananas,486,37,banana,bana,ban,ban,,Fruit,,Bananas and plantains,Fruit,Tropical fruit,Bananas,Bananas,Fruit and vegetables
+Plantains and others,489,38,plantain,plnt,ban,ban,,Fruit,,Bananas and plantains,Fruit,Tropical fruit,Vegetables,Vegetables,Fruit and vegetables
+Oranges,490,40,temperate fruit,temf,frt,cit,,Fruit,,Citrus fruit,Fruit,Temperate fruit,Citrus fruit,Temperate fruit,Fruit and vegetables
+Tangerines; mandarins; clementines; satsumas,495,40,temperate fruit,temf,frt,cit,,Fruit,,Citrus fruit,Fruit,Temperate fruit,Citrus fruit,Temperate fruit,Fruit and vegetables
+Lemons and limes,497,40,temperate fruit,temf,frt,cit,,Fruit,,Citrus fruit,Fruit,Temperate fruit,Citrus fruit,Temperate fruit,Fruit and vegetables
+Grapefruit (inc. pomelos),507,40,temperate fruit,temf,frt,cit,,Fruit,,Citrus fruit,Fruit,Temperate fruit,Citrus fruit,Temperate fruit,Fruit and vegetables
+Apples,515,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Pears,521,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Quinces,523,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Apricots,526,39,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Cherries; sour,530,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Cherries,531,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Peaches and nectarines,534,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Plums and sloes,536,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Strawberries,544,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Raspberries,547,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Gooseberries,549,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Currants,550,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Blueberries,552,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Cranberries,554,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Berries nes,558,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Grapes,560,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Grapes,Fruit,Temperate fruit,Grapes,Temperate fruit,Fruit and vegetables
+Watermelons,567,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Melons; other (inc.cantaloupes),568,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Figs,569,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Mangoes; mangosteens; guavas,571,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Avocados,572,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Pineapples,574,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Dates,577,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Persimmons,587,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Kiwi fruit,592,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Papayas,600,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Fruit; tropical fresh nes,603,39,tropical fruit,trof,frt,,Fruit_and_nuts,Fruit,,Tropical fruit,Fruit,Tropical fruit,Tropical fruit,Tropical fruit,Fruit and vegetables
+Fruit; fresh nes,619,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Coffee; green,656,32,arabica coffee,acof,cc2,cof,,Stimulants,,Coffee,Coffee,Coffee,Coffee,Coffee,Stimulants and spices
+Cocoa; beans,661,34,cocoa,coco,cc2,coc,,Stimulants,,Cocoa,Cocoa,Cocoa,Cocoa,Cocoa,Stimulants and spices
+Tea,667,35,tea,teas,cc2,tea,,Stimulants,,Tea and Maté,Tea and maté,Tea and maté,Tea and maté,Tea and maté,Stimulants and spices
+Maté,671,35,tea,teas,cc2,,Stimulants,Stimulants,,Tea and Maté,Tea and maté,Tea and maté,Tea and maté,Tea and maté,Stimulants and spices
+MatÃ©,671,35,tea,teas,cc2,,Stimulants,Stimulants,,Tea and Maté,Tea and maté,Tea and maté,Tea and maté,Tea and maté,Stimulants and spices
+Pepper (piper spp.),687,41,rest of crops,rest,nes,,Other,Spices,,Other spices,Spices,Spices,Spices,Spices,Stimulants and spices
+Chillies and peppers; dry,689,41,vegetables,vege,veg,,Solanaceae,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Vanilla,692,42,rest of crops,rest,nes,,Other,Spices,,Vanilla,Spices,Spices,Spices,Spices,Stimulants and spices
+Cinnamon (cannella),693,43,rest of crops,rest,nes,,Other,Spices,,Other spices,Spices,Spices,Spices,Spices,Stimulants and spices
+Cloves,698,44,rest of crops,rest,nes,,Other,Spices,,Cloves,Spices,Spices,Spices,Spices,Stimulants and spices
+Nutmeg; mace and cardamoms,702,45,rest of crops,rest,nes,,Other,Spices,,Other spices,Spices,Spices,Spices,Spices,Stimulants and spices
+Anise; badian; fennel; coriander,711,46,rest of crops,rest,nes,,Other,Spices,,Other spices,Spices,Spices,Spices,Spices,Stimulants and spices
+Ginger,720,47,rest of crops,rest,nes,,Other,Spices,,Other spices,Spices,Spices,Spices,Spices,Stimulants and spices
+Spices nes,723,48,rest of crops,rest,nes,,Other,Spices,,Other spices,Spices,Spices,Spices,Spices,Stimulants and spices
+,,,,,,,,,,,,,,,
+Sorghum,83,7,sorghum,sorg,srg,srg,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Sweet potatoes,122,10,sweet potato,swpo,rt1,spo,,Roots and tubers,,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,"Grains, roots, starchy carbohydrates"
+Sugar beet,157,29,sugarbeet,sugb,sub,sub,,Sugar crops,,Sugar crops,Sugar crops,Sugar crops,Sugar beet,Sugar beet,Sugar crops
+Sugar cane,156,28,sugarcane,sugc,suc,sug,,Sugar crops,,Sugar crops,Sugar crops,Sugar crops,Sugar cane,Sugar cane,Sugar crops
+Millet,79,5,pearl millet,pmil,mlt,pml,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Canary seed,101,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Oilseeds nes,339,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Castor oil seed,265,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Linseed,333,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Poppy seed,296,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Safflower seed,280,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Tung nuts,275,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Triticale,97,8,other cereals,ocer,oce,,Cereals,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Buckwheat,89,8,other cereals,ocer,oce,bck,,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Fonio,94,8,other cereals,ocer,oce,,Cereals,Grains,,Grains,Grains,Grains,Grains,Grains,"Grains, roots, starchy carbohydrates"
+Yams,137,11,yams,yams,rt3,yam,,Roots and tubers,,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,"Grains, roots, starchy carbohydrates"
+Hempseed,336,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Oilcrops,Oilcrops,"Legumes, beans, nuts"
+Taro (cocoyam),136,13,other roots,orts,rt3,,Roots,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Cow peas; dry,195,16,cowpea,cowp,nes,cow,,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Melonseed,299,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Tallowtree seed,305,27,other oil crops,ooil,nes,,Oils,"Legumes, nuts, and seeds",,Oilseeds,"Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Okra,430,41,vegetables,vege,veg,,Vegetables,Vegetables,,Vegetables,Vegetables,Vegetables,Vegetables,Vegetables,Fruit and vegetables
+Carobs,461,19,other pulses,opul,pls,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,Fruit and vegetables
+Chicory roots,459,13,other roots,orts,rt3,,Roots,Roots and tubers,,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,Roots and tubers,"Grains, roots, starchy carbohydrates"
+Fruit; stone nes,541,40,temperate fruit,temf,frt,,Fruit_and_nuts,Fruit,,Fruit,Fruit,Temperate fruit,Temperate fruit,Temperate fruit,Fruit and vegetables
+Pigeon peas,197,17,pigeonpea,pige,nes,pig,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Jojoba seed,277,40,temperate fruit,temf,nes,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Yautia (cocoyam),135,13,other roots,orts,rt3,,Roots,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Roots and tubers,Roots and tubers,"Grains, roots, starchy carbohydrates"
+Kapok fruit,310,39,tropical fruit,trof,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Kapokseed in shell,311,39,tropical fruit,trof,nes,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Cassava leaves,378,12,cassava,cass,rt2,csv,,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Karite nuts (sheanuts),263,40,temperate fruit,temf,frt,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+Bambara beans,203,21,groundnut,grou,nes,,Fruit_and_nuts,"Legumes, nuts, and seeds",,"Other legumes, nuts, and seeds","Legumes, nuts, and seeds","Legumes, nuts, and seeds",Other,Other,"Legumes, beans, nuts"
+,,,,,,,,,,,,,,,
+Meat; cattle,867,-99,ruminant meat,past,beef,Ruminant,,Ruminant meat,bvmeat,Cattle meat,Ruminant meat,,Ruminant meat,Ruminant meat,Ruminant meat
+Milk; whole fresh cow,882,-99,dairy,past,dairy,Ruminant,,Dairy,bvmilk,Dairy,Dairy,,Dairy,Dairy,Dairy and eggs
+Meat; sheep,977,-99,ruminant meat,past,sheep,Ruminant,,Ruminant meat,sgmeat,Sheep and goat meat,Ruminant meat,,Ruminant meat,Ruminant meat,Ruminant meat
+Meat; goat,1017,-99,ruminant meat,past,sheep,Ruminant,,Ruminant meat,sgmeat,Sheep and goat meat,Ruminant meat,,Ruminant meat,Ruminant meat,Ruminant meat
+Meat; pig,1035,-99,meat,past,pig,Monogastric,,Pig meat,pigs,Pig meat,Pig meat,,Pig meat,Pig meat,Poultry and pig meat
+Meat; chicken,1058,-99,meat,past,poultry,Monogastric,,Poultry meat,chickens,Poultry meat,Poultry meat,,Poultry meat,Poultry meat,Poultry and pig meat
+Eggs; hen; in shell,1062,-99,eggs,past,egg,Monogastric,,Eggs,chickens,Eggs,Eggs,,Eggs,Eggs,Dairy and eggs
+Meat; duck,1069,-99,meat,past,poultry,Monogastric,,Poultry meat,ducks,Poultry meat,Poultry meat,,Poultry meat,Poultry meat,Poultry and pig meat
+Meat; goose and guinea fowl,1073,-99,meat,past,poultry,Monogastric,,Poultry meat,ducks,Poultry meat,Poultry meat,,Poultry meat,Poultry meat,Poultry and pig meat
+Meat; turkey,1080,-99,meat,past,poultry,Monogastric,,Poultry meat,chickens,Poultry meat,Poultry meat,,Poultry meat,Poultry meat,Poultry and pig meat
+Eggs; other bird; in shell,1091,-99,eggs,past,egg,Monogastric,,Eggs,ducks,Eggs,Eggs,,Eggs,Eggs,Dairy and eggs
+Meat; horse,1097,-99,meat,past,,Ruminant,,Ruminant meat,past,Other ruminant meat,Ruminant meat,,Ruminant meat,Ruminant meat,Ruminant meat
+Meat; rabbit,1141,-99,meat,past,,Monogastric,,,sgmeat,,,,,,
+Meat nes,1166,-99,meat,past,,Ruminant,,Ruminant meat,past,Other ruminant meat,Ruminant meat,,Ruminant meat,Ruminant meat,Ruminant meat
