@@ -121,7 +121,7 @@ def yield_kg_km2(
 
     # try:
     mask: Any = (ydat["Area Code"] == country_code) & (
-        ydat["Item"].astype(str).str.contains(list_to_str(items))
+        ydat["Item"].astype(str).isin(items)
     )
     matched_values: Any = ydat.loc[mask, "Value"]
     # except AssertionError:
@@ -132,6 +132,7 @@ def yield_kg_km2(
     
     # yields: np.ndarray = np.array(matched_values) * 0.1 * 100 # convert hg / ha (wtf) to kg / km2
     ## NOW kg/ha thanks FAO 
+    
     yields: np.ndarray = np.array(matched_values) * 100 # kg/km2
     displaced_production: np.ndarray = (1 / len(items)) * AREA_KM2 * yields
 
@@ -178,7 +179,10 @@ def path_walking(rpath: str, comm_of_interest: str, coi_code: int) -> pd.DataFra
                         cof["Producer_Country_Code"] == coi_code, "provenance"
                     ].sum()
                     for c in cof["Country_ISO"].unique():
-                        cof.loc[cof["Country_ISO"] == c, "import_ratio"] = import_ratio[c]
+                        try:
+                            cof.loc[cof["Country_ISO"] == c, "import_ratio"] = import_ratio[c]
+                        except KeyError:
+                            cof.loc[cof["Country_ISO"] == c, "import_ratio"] = np.nan
                     cof["Consumer_ISO3"] = current_country_iso
                     coi_exports = pd.concat([coi_exports, cof])
             except FileNotFoundError as e:
@@ -207,13 +211,14 @@ def leakage_calculation(outdf: pd.DataFrame, crop_bd: pd.DataFrame) -> pd.DataFr
             )
         else:
             bdintensity: float = cast(float, filtered_bd.item())
+            
         outdf.loc[row, "bd_val_kg"] = bdintensity
         outdf.loc[row, "bd_leakage"] = (
             cast(float, outdf.loc[row, "idisp_prod"].squeeze()) * bdintensity
         )
     return outdf
 
-def net_exporters(
+def leakage_crops(
     df: pd.DataFrame,
     ydat: pd.DataFrame,
     cropdb: pd.DataFrame,
@@ -237,15 +242,11 @@ def net_exporters(
     coi_code: int = country[1]
 
     comm_bd: pd.DataFrame = df[
-        df["Item"].astype(str).str.contains(comm_of_interest, case=False)
+        df["Item"].astype(str) == comm_of_interest
     ]
-    
     internal_yield_kg_km2, displaced_prod = yield_kg_km2(ydat, items, coi_code, cropdb)
-    
-    
-    
     coi_exports: pd.DataFrame = path_walking(rpath, comm_of_interest, coi_code)
-    
+
     if len(coi_exports) == 0: 
         raise ValueError(
             f"Couldn't find any exports of {items} for {country}"
@@ -255,19 +256,19 @@ def net_exporters(
         raise ValueError(
             f"Displaced production calculated to be zero! (likely mushrooms?)"
         )
-        
     
     else:
         leakage_calc: pd.DataFrame = pd.DataFrame()
         displaced_prod_full: pd.DataFrame = pd.DataFrame()
         for product_of_interest in items:
+            
             dpdf = pd.DataFrame()
             for icountry in coi_exports["Consumer_ISO3"].unique():
                 cdat: pd.DataFrame = coi_exports[
                     (coi_exports["Consumer_ISO3"] == icountry)
                     # & ~(coi_exports["Producer_Country_Code"] == coi_code)
                 ]
-                mask = cdat["Item"].astype(str).str.contains(product_of_interest)
+                mask = cdat["Item"].astype(str) == product_of_interest
                 cdat.loc[mask, "idisp_prod"] = (
                     displaced_prod[items.index(product_of_interest)]
                     * cdat.loc[mask, "export_weight"]
@@ -283,7 +284,7 @@ def net_exporters(
             )
     
             comm_bd_item: pd.DataFrame = comm_bd[
-                comm_bd["Item"].astype(str).str.contains(product_of_interest)
+                comm_bd["Item"].astype(str) == product_of_interest
             ]
             prod_sums = leakage_calculation(prod_sums, comm_bd_item)
             leakage_calc = pd.concat([leakage_calc, prod_sums])
@@ -301,3 +302,75 @@ def net_exporters(
                 market_leakage = np.nan
     
         return internal_bd, benefit, market_leakage, internal_yield_kg_km2, leakage_calc, displaced_prod_full
+    
+def leakage_anims(
+    df: pd.DataFrame,
+    ydat: pd.DataFrame,
+    cropdb: pd.DataFrame,
+    rpath: str,
+    country: tuple[str, int],
+    items: list[str],
+) -> tuple[float, float, float, np.ndarray, pd.DataFrame]:
+    comm_of_interest = list_to_str(items)
+    
+    country_name: str = country[0]
+    coi_code: int = country[1]
+    comm_bd = df[df.Item.isin(cropdb[cropdb.Item.isin(items)].group_name_v2)]
+    
+    # internal_yield_kg_km2, displaced_prod = yield_kg_km2(ydat, items, coi_code, cropdb) #This currently doesn't work for animal products
+    coi_exports: pd.DataFrame = path_walking(rpath, comm_of_interest, coi_code)
+    
+    if len(coi_exports) == 0: 
+        raise ValueError(
+            f"Couldn't find any exports of {items} for {country}"
+        ) 
+        
+    else:
+        leakage_calc: pd.DataFrame = pd.DataFrame()
+        displaced_prod_full: pd.DataFrame = pd.DataFrame()
+        for product_of_interest in items:
+            dpdf = pd.DataFrame()
+            
+            comm_bd_item: pd.DataFrame = comm_bd[
+                comm_bd["Item"].astype(str).isin(cropdb[cropdb.Item==product_of_interest].group_name_v2)
+            ]
+            
+            for icountry in coi_exports["Consumer_ISO3"].unique():
+                cdat: pd.DataFrame = coi_exports[
+                    (coi_exports["Consumer_ISO3"] == icountry)
+                    # & ~(coi_exports["Producer_Country_Code"] == coi_code)
+                ]
+                mask = cdat["Item"].astype(str) == product_of_interest
+                cdat.loc[mask, "idisp_prod"] = (
+                    1 # displaced_prod[items.index(product_of_interest)]
+                    * cdat.loc[mask, "export_weight"]
+                    * cdat.loc[mask, "import_ratio"]
+                    / cdat.loc[mask, "import_ratio"].sum()
+                )
+                
+                dpdf = pd.concat([dpdf, cdat])
+    
+            prod_sums = (
+                dpdf.groupby(["Producer_Country_Code", "Country_ISO"])["idisp_prod"]
+                .sum()
+                .reset_index()
+            )
+            
+            prod_sums = leakage_calculation(prod_sums, comm_bd_item)
+            leakage_calc = pd.concat([leakage_calc, prod_sums])
+            leakage_calc.insert(0, "AREA_RESTORE_KM2", AREA_KM2)
+            displaced_prod_full = pd.concat([displaced_prod_full, dpdf])
+
+            
+            internal_bd: float = cast(float, comm_bd.loc[comm_bd["a"] == country_name, "bd"]) # kg
+        
+            benefit: float = (
+                comm_bd.loc[comm_bd["a"] == country_name, "bd"].mean() * 1 # * displaced_prod.sum()
+            )
+            try:
+                market_leakage: float = np.nansum(leakage_calc["bd_leakage"])
+            except KeyError:
+                market_leakage = np.nan
+    
+        # return internal_bd, benefit, market_leakage, internal_yield_kg_km2, leakage_calc, displaced_prod_full
+        return internal_bd, benefit, market_leakage, np.nan, leakage_calc, displaced_prod_full

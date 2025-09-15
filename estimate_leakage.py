@@ -8,7 +8,7 @@ import _plot_funcs as pf
 import faostat
 
 # CONSTANTS
-def calculate_leakage_vals_crops(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH, 
+def calculate_leakage_vals(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH, 
                            LIFE_IMPACTS_KG_PATH, DATA_PATH):
     ccodes: pd.DataFrame = pd.read_csv(  # type: ignore
         os.path.join(DATA_PATH, "country_codes.csv"), encoding="latin-1"
@@ -32,7 +32,8 @@ def calculate_leakage_vals_crops(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
     
     pdat: pd.DataFrame = faostat.get_data_df(
         "QCL",
-        pars={"year": "2020"}
+        pars={"year": "2020",},
+        strval=False
     )
     
     pdat = pdat[pdat["Year"] == pdat["Year"].unique().max()]
@@ -45,56 +46,70 @@ def calculate_leakage_vals_crops(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
     
     df: pd.DataFrame = pd.read_csv(LIFE_IMPACTS_KG_PATH, index_col=0)  # type: ignore
     
-    internal_bd_kg, internal_bd_benefit, external_bd_leakage, internal_yield_kg_km2, leakage_calc, displaced_prod_full = fd.net_exporters(
-        df, yield_dat, cropdb, RPATH, (COUNTRY_OF_INTEREST, countries[COUNTRY_OF_INTEREST]), ITEM_OF_INTEREST
-    )
+    # print(cropdb[cropdb.Item.isin(ITEM_OF_INTEREST)])
+    is_anim = df[df.Item.isin(cropdb[cropdb.Item.isin(ITEM_OF_INTEREST)].group_name_v2)].isanim.any()
     
-    # external_yield_kg_km2: Any = displaced_prod_full["FAO_yield_kgm2"] * 1E6 # kg/m2 to kg/km2
-    # internal_bd_km2: list[np.ndarray] = [internal_bd_kg * internal_yield_kg_km2]
-    # external_bd_km2: Any = (
-    #     displaced_prod_full.groupby("Producer_Country_Code")["bd_opp_cost_m2"].mean().dropna() * 1E6 #E/m2 to E/km2
-    # ) # national average bd per km2
-    
-    # insert row with benefit
-    
-    if len(internal_bd_kg) == 0:
-        raise ValueError(
-            f"No internal biodiversity value - probably this is an animal product"
+    # print(df[df.Item.isin(cropdb[cropdb.Item.isin(ITEM_OF_INTEREST)].group_name)])
+    # quit()
+    if is_anim: 
+        internal_bd_kg, internal_bd_benefit, external_bd_leakage, internal_yield_kg_km2, leakage_calc, displaced_prod_full = fd.leakage_anims(
+            df, yield_dat, cropdb, RPATH, (COUNTRY_OF_INTEREST, countries[COUNTRY_OF_INTEREST]), ITEM_OF_INTEREST
         )
         
+        if len(internal_bd_kg) == 0:
+            raise ValueError(
+                f""
+            )
+        
+        leakage_calc["AREA_RESTORE_KM2"] = np.nan
+        
+
+    else:
+        internal_bd_kg, internal_bd_benefit, external_bd_leakage, internal_yield_kg_km2, leakage_calc, displaced_prod_full = fd.leakage_crops(
+            df, yield_dat, cropdb, RPATH, (COUNTRY_OF_INTEREST, countries[COUNTRY_OF_INTEREST]), ITEM_OF_INTEREST
+        )
+        
+        if len(internal_bd_kg) == 0:
+            raise ValueError(
+                f"No internal biodiversity value"
+            )
+            
     leakage_calc.loc[len(leakage_calc)] = [fd.AREA_KM2,
                                            countries[COUNTRY_OF_INTEREST],
                                            COUNTRY_OF_INTEREST, 
-                                
                                 -displaced_prod_full.idisp_prod.sum(), 
                                 float(internal_bd_kg), 
                                 float(internal_bd_kg) * -displaced_prod_full.idisp_prod.sum()]
     
     leakage_calc["leakage_per_kg_halted_production"] = leakage_calc.bd_leakage / displaced_prod_full.idisp_prod.sum()
-    # leakage_calc["bd_benefit"] = [_ for _ in leakage_calc.bd_leakage if _ < 0]    
+    
+    displaced_prod_full["idisp_arable_m2"] = displaced_prod_full.idisp_prod / displaced_prod_full.FAO_yield_kgm2
+    displaced_prod_full["idisp_pasture_m2"] = displaced_prod_full.idisp_prod * displaced_prod_full.Pasture_m2.replace(0, np.nan) / (1000*displaced_prod_full.provenance)
 
+    asum = (displaced_prod_full.groupby(["Producer_Country_Code", "Country_ISO"])["idisp_arable_m2"].sum()).to_frame().reset_index()
+    asum.loc[len(asum)] = np.nan
+    leakage_calc["idisp_arable_km2"] = asum.idisp_arable_m2 / 1E6
     
+    psum = (displaced_prod_full.groupby(["Producer_Country_Code", "Country_ISO"])["idisp_pasture_m2"].sum()).to_frame().reset_index()
+    psum.loc[len(asum)] = np.nan
+    leakage_calc["idisp_pasture_km2"] = psum.idisp_pasture_m2 / 1E6
     
-    
-    # leakage_calc["bd_per_kg"] = internal_bd
-    # pf.leakage_yield_bd_boxes(ITEM_OF_INTEREST, internal_bd_benefit, external_bd_leakage, 
-    #                        internal_yield_kg_km2, external_yield_kg_km2,
-    #                        internal_bd_km2, external_bd_km2)
-    
+    leakage_calc["arable_km2_per_kg_halted_production"] = leakage_calc["idisp_arable_km2"] / displaced_prod_full.idisp_prod.sum()
+    leakage_calc["pasture_km2_per_kg_halted_production"] = leakage_calc["idisp_pasture_km2"] / displaced_prod_full.idisp_prod.sum()
     
     return leakage_calc, displaced_prod_full
 
 if __name__ == "__main__":
-    RPATH: str = "E:\\Food_v1\\all_results_v1_birds" # where the outputs of the Food model are
-    LIFE_IMPACTS_KG_PATH: str = "E:\\Food_v1\\country_bd_items_weights_v1_birds.csv" # as above but the result of 'plot_global_commodity_impacts'
-    RESULTS_DIR: str = "E:\\Leakage\\v1_birds" # where to save stuff
+    RPATH: str = "D:\\Food_v1\\all_results_v1" # where the outputs of the Food model are
+    LIFE_IMPACTS_KG_PATH: str = "D:\\Food_v1\\country_bd_items_weights_v1.csv" # as above but the result of 'plot_global_commodity_impacts'
+    RESULTS_DIR: str = "D:\\Leakage\\v1" # where to save stuff
 
     DATA_PATH: str = "data"
     
-    COUNTRY_OF_INTEREST = "GBR"
+    COUNTRY_OF_INTEREST = "CRI"
     
-    ITEM_OF_INTEREST = ["Cabbages"]
+    ITEM_OF_INTEREST = ['Meat; cattle']
     
-    leakage_calc, displaced_prod_full = calculate_leakage_vals_crops(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH, 
+    leakage_calc, displaced_prod_full = calculate_leakage_vals(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH, 
                             LIFE_IMPACTS_KG_PATH, DATA_PATH)
     
