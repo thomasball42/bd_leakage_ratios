@@ -41,7 +41,7 @@ def calculate_leakage_vals(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
     yield_dat: pd.DataFrame = pdat[pdat["Element"].astype(str).str.contains("Yield")]
     
     cropdb: pd.DataFrame = pd.read_csv(  # type: ignore
-        os.path.join(DATA_PATH, "crop_db.csv"),
+        os.path.join(DATA_PATH, "commodity_crosswalk.csv"),
         ) 
     
     df: pd.DataFrame = pd.read_csv(LIFE_IMPACTS_KG_PATH, index_col=0)  # type: ignore
