@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore', message='Workbook contains no default style')
 
 # CONSTANTS
 OVERWRITE = True
-RPATH: Path = Path("results", "2021") # where the outputs of the Food model are
+RPATH: Path = Path("results_test", "2021") # where the outputs of the Food model are
 LIFE_IMPACTS_KG_PATH: Path = Path("mrio_pipeline", "input_data", "mapspam_outputs", "outputs", "2020", "processed_results_2020.csv") # as above but the result of 'plot_global_commodity_impacts'
 RESULTS_DIR: Path = Path("results_leakage", "2021") # where to save stuff
 DATA_PATH: Path = Path("mrio_pipeline", "input_data")
@@ -50,8 +50,8 @@ countries = {
                 # "CRI" : 48
              }
 
-# item_code_list = set(crops_pdat["Item Code"].unique().tolist() + anims_pdat["Item Code"].unique().tolist())
-item_code_list = [15]
+item_code_list = set(crops_pdat["Item Code"].unique().tolist() + anims_pdat["Item Code"].unique().tolist())
+# item_code_list = [15]
 
 with tqdm(total=len(countries) * len(item_code_list), 
           desc="Processing countries and items") as pbar:
@@ -59,6 +59,7 @@ with tqdm(total=len(countries) * len(item_code_list),
         
         if not os.path.isfile(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage.csv")) or OVERWRITE:
             cdf: pd.DataFrame = pd.DataFrame()
+            cdf_per_kg: pd.DataFrame = pd.DataFrame()
             
             for item_code in item_code_list:    
                 
@@ -73,21 +74,28 @@ with tqdm(total=len(countries) * len(item_code_list),
                 if len(crops_pdat[(crops_pdat["Area Code"] == country_code) & (crops_pdat["Item Code"] == item_code)]) < 1:
                     continue
 
-                # try:
-                leakage_calc, displaced_prod_full = estimate_leakage.return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
+                try:
+                    leakage_results = estimate_leakage.return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
                                         DATA_PATH, item_code, countries=countries, production_data=pdat)
-                # except ValueError:
-                #     leakage_calc = pd.DataFrame()
+                    leakage_calc = leakage_results[0]
+                    leakage_calc_per_kg = leakage_results[1]
+
+                except ValueError:
+                    leakage_calc = pd.DataFrame()
+                    leakage_calc_per_kg = pd.DataFrame()
                 
                 leakage_calc.insert(0, "COUNTRY_OF_INTEREST", COUNTRY_OF_INTEREST)
                 leakage_calc.insert(1, "COUNTRY_OF_INTEREST_CODE", country_code)
-                leakage_calc.insert(2, "ITEM_OF_INTEREST", ITEM_OF_INTEREST[0])
+                # leakage_calc.insert(2, "ITEM_OF_INTEREST", ITEM_OF_INTEREST[0])
      
                 cdf = pd.concat([cdf, leakage_calc])
-            
-            cdf.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage.csv"))
+                cdf_per_kg = pd.concat([cdf_per_kg, leakage_calc_per_kg])
 
-    
+            cdf.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage.csv"),
+                       index=False)
+            cdf_per_kg.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage_per_kg.csv"),
+                              index=False)
+
     
     
     

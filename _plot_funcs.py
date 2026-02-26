@@ -4,9 +4,6 @@ Created on Thu Sep 12 10:49:17 2024
 
 @author: Thomas Ball
 
-Program calculates: if 1000km2 of land in Country A that is used to produce Item X was
-reverted to natural habitat again, what would be the impacts on Country A and on a second
-Country B that Country A would need to import more Item X from
 """
 
 from typing import Any
@@ -14,6 +11,34 @@ import matplotlib.pyplot as plt
 
 A: float = 0.8
 S: float = 0.5
+
+# Colours for the different food groups in the Clark et al. 2022 PNAS paper
+colours_stim: dict[str, str] = {
+    "Ruminant meat": "#C90D75",
+    "Pig meat": "#D64A98",
+    "Poultry meat": "#D880B1",
+    "Dairy": "#F7BDDD",
+    "Eggs": "#FFEDF7",
+    "Grains": "#D55E00",
+    "Rice": "#D88E53",
+    "Soybeans": "#DCBA9E",
+    "Roots and tubers": "#0072B2",
+    "Vegetables": "#4F98C1",
+    "Legumes and pulses": "#9EBFD2",
+    "Bananas": "#FFED00",
+    "Tropical fruit": "#FFF357",
+    "Temperate fruit": "#FDF8B9",
+    "Tropical nuts": "#27E2FF",
+    "Temperate nuts": "#7DEEFF",
+    "Sugar beet": "#FFC000",
+    "Sugar cane": "#F7C93B",
+    "Spices": "#009E73",
+    "Coffee": "#33CCA2",
+    "Cocoa": "#62DEBC",
+    "Tea and maté": "#A2F5DE",
+    "Oilcrops": "#000000",
+    "Other": "#A2A2A2",
+}
 
 def bar_chart(
     ax: Any, benefit: float, leakage: float, labels: list[str] | None = None
