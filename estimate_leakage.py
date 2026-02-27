@@ -64,13 +64,14 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
     coi_exports["bd_per_m2"] = coi_exports['bd_opp_cost_m2']
     coi_exports["bd_per_m2_err"] = coi_exports['opp_cost_err'] / 1E6
 
-    coi_exports["swwu_l_per_kg"] = (coi_exports['SWWU_avg_calc'] / (1000 * coi_exports['provenance'])).apply(fd.round_sig, args=(6,))
+    coi_exports["swwu_l_per_kg"] = (coi_exports['SWWU_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(fd.round_sig, args=(6,))
 
-    coi_exports["ghg_kg_co2eq_per_kg"] = (coi_exports['GHG_avg_calc'] / (1000 * coi_exports['provenance'])).apply(fd.round_sig, args=(6,))
+    coi_exports["ghg_kg_co2eq_per_kg"] = (coi_exports['GHG_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(fd.round_sig, args=(6,))
 
     incl = ["Consumer_Country_Code", "Consumer_ISO3", # consumer
             "Producer_Country_Code", "Country_ISO", # producer
-            "Item", "Item_Code", 
+            "ItemT_Name", "ItemT_Code",
+            "Item", "Item_Code",
             "pasture_m2_per_kg", 
             "arable_m2_per_kg", 
             "land_use_total_m2_per_kg",
@@ -81,31 +82,22 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
             "idisplaced_production_kg"]
     
 
-    displaced_production_full = coi_exports[incl]
-    displaced_production_full.rename(columns={"Consumer_ISO3": "Consumer_ISO",
+    coi_exports = coi_exports[incl]
+    coi_exports.rename(columns={"Consumer_ISO3": "Consumer_ISO",
                                               "Country_ISO": "Producer_ISO"}, 
                                               inplace=True)
 
-    agg_displacement = displaced_production_full.groupby(displaced_production_full.columns.drop("idisplaced_production_kg").to_list()).sum().reset_index()
+    coi_exports["pasture_m2_leakage"] = coi_exports["pasture_m2_per_kg"] * coi_exports["idisplaced_production_kg"]
+    coi_exports["arable_m2_leakage"] = coi_exports["arable_m2_per_kg"] * coi_exports["idisplaced_production_kg"]
+    coi_exports["land_use_total_m2_leakage"] = coi_exports["land_use_total_m2_per_kg"] * coi_exports["idisplaced_production_kg"]
+    coi_exports["bd_leakage"] = coi_exports["bd_per_m2"] * coi_exports["land_use_total_m2_leakage"]
+    coi_exports["bd_leakage_err"] = coi_exports["bd_per_m2_err"] * coi_exports["land_use_total_m2_leakage"]
+    coi_exports["swwu_l_leakage"] = coi_exports["swwu_l_per_kg"] * coi_exports["idisplaced_production_kg"]   
+    coi_exports["ghg_kg_co2eq_leakage"] = coi_exports["ghg_kg_co2eq_per_kg"] * coi_exports["idisplaced_production_kg"]
 
-    agg_displacement["pasture_m2_leakage"] = agg_displacement["pasture_m2_per_kg"] * agg_displacement["idisplaced_production_kg"]
-    agg_displacement["arable_m2_leakage"] = agg_displacement["arable_m2_per_kg"] * agg_displacement["idisplaced_production_kg"]
-    agg_displacement["land_use_total_m2_leakage"] = agg_displacement["land_use_total_m2_per_kg"] * agg_displacement["idisplaced_production_kg"]
-    agg_displacement["bd_leakage"] = agg_displacement["bd_per_m2"] * agg_displacement["land_use_total_m2_leakage"]
-    agg_displacement["bd_leakage_err"] = agg_displacement["bd_per_m2_err"] * agg_displacement["land_use_total_m2_leakage"]
-    agg_displacement["swwu_l_leakage"] = agg_displacement["swwu_l_per_kg"] * agg_displacement["idisplaced_production_kg"]   
-    agg_displacement["ghg_kg_co2eq_leakage"] = agg_displacement["ghg_kg_co2eq_per_kg"] * agg_displacement["idisplaced_production_kg"]
-
-    drop = ["pasture_m2_per_kg", 
-            "arable_m2_per_kg", 
-            "land_use_total_m2_per_kg", 
-            "bd_per_m2", 
-            "bd_per_m2_err", 
-            "swwu_l_per_kg", 
-            "ghg_kg_co2eq_per_kg",
-            "idisplaced_production_kg"]
-
-    keep = ["Producer_ISO", "Producer_Country_Code", "Item", "Item_Code",
+    keep = ["Producer_ISO", "Producer_Country_Code", 
+            "ItemT_Name", "ItemT_Code",
+            "Item", "Item_Code",
             "idisplaced_production_kg",
             "pasture_m2_leakage", 
             "arable_m2_leakage", 
@@ -115,15 +107,24 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
             "swwu_l_leakage", 
             "ghg_kg_co2eq_leakage"]
 
-    agg_displacement = agg_displacement[keep]
+    coi_exports = coi_exports[keep]
     
-    leakage_calc = agg_displacement.groupby(["Producer_ISO", "Producer_Country_Code", "Item", "Item_Code"]).sum().reset_index()
+    coi_exports["Producer_ISO"] = coi_exports["Producer_ISO"].astype(str).str.strip()
+    coi_exports["Producer_Country_Code"] = coi_exports["Producer_Country_Code"].astype(int)
+    coi_exports["ItemT_Name"] = coi_exports["ItemT_Name"].astype(str).str.strip()
+    coi_exports["ItemT_Code"] = coi_exports["ItemT_Code"].astype(int)
+
+    leakage_calc = coi_exports[[_ for _ in keep if _ not in ["Item", "Item_Code"]]].groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code"]).sum().reset_index()
+    displaced_production_full = coi_exports.groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code", "Item", "Item_Code"]).sum().reset_index()
+
+    leakage_calc.to_csv("leakage_calc.csv", index=False)
+    displaced_production_full.to_csv("displaced_production_full.csv", index=False)
 
     internal_rows = {
                     "Producer_ISO" : COUNTRY_OF_INTEREST,
                     "Producer_Country_Code" : countries[COUNTRY_OF_INTEREST],
-                    "Item" : ITEM_OF_INTEREST[0],
-                    "Item_Code" : item_code,
+                    "ItemT_Name" : ITEM_OF_INTEREST[0],
+                    "ItemT_Code" : item_code,
                     "idisplaced_production_kg" : - displaced_production_mass_kg.squeeze(),
                     "pasture_m2_leakage" : - internal_land_use_pasture_m2_pkg.squeeze() * displaced_production_mass_kg.squeeze(),
                     "arable_m2_leakage" : - internal_land_use_arable_m2_pkg.squeeze() * displaced_production_mass_kg.squeeze(),
@@ -142,11 +143,23 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
 
     leakage_calc_per_kg = leakage_calc.copy()
 
-    for col in leakage_calc_per_kg.columns[4:]:
+    pkg_cols = [
+            "idisplaced_production_kg",
+            "pasture_m2_leakage", 
+            "arable_m2_leakage", 
+            "land_use_total_m2_leakage", 
+            "bd_leakage", 
+            "bd_leakage_err", 
+            "swwu_l_leakage", 
+            "ghg_kg_co2eq_leakage"]
+
+    for col in pkg_cols:
         leakage_calc_per_kg[col] = leakage_calc_per_kg[col] / displaced_production_mass_kg.squeeze()
         leakage_calc_per_kg.rename(columns={col: f"{col}_per_kg"}, inplace=True) 
 
-    return (leakage_calc, leakage_calc_per_kg)
+    leakage_calc_per_kg.to_csv("leakage_calc_kg.csv", index=False)
+
+    return (leakage_calc, leakage_calc_per_kg, displaced_production_full)
 
 if __name__ == "__main__":
     pass
