@@ -1,5 +1,5 @@
-For this program to work, you need some data which is not present in this repo.
+For this to work, you need some data which is not present in this repo.
 
-In a file called "data", you need **country_bd_items_weight.csv** and **country_codes.csv**. You also need to download **Production_Crops_Livestock_E_All_Data_(Normalized).csv** which can be found by downloading 'All Data Normalized' from [here](https://www.fao.org/faostat/en/#data/QCL).
+You will need to download and run this repository: https://github.com/louis-de-neve/mrio_pipeline. Do so for all years that you wish to run the leakage method for. 
 
-In addition, you need some (if not all) of the output files from the [Food_v0](https://github.com/thomasball42/food_v0) repository.
+You will need to change 'RPATH' in the run_countries.py file to the location of the MRIO output data.

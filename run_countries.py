@@ -16,12 +16,13 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore', message='Workbook contains no default style')
 
-
 # CONSTANTS
 OVERWRITE = True
 RPATH: Path = Path("mrio_pipeline_results", "2021") # where the outputs of the Food model are
-LIFE_IMPACTS_KG_PATH: Path = Path("mrio_pipeline", "input_data", "mapspam_outputs", "outputs", "2020", "processed_results_2020.csv") # as above but the result of 'plot_global_commodity_impacts'
 RESULTS_DIR: Path = Path("results_leakage", "2021") # where to save stuff
+
+# these should stay the same if 'mrio pipeline' is in the same parent dir as this
+LIFE_IMPACTS_KG_PATH: Path = Path("mrio_pipeline", "input_data", "mapspam_outputs", "outputs", "2020", "processed_results_2020.csv") # as above but the result of 'plot_global_commodity_impacts'
 DATA_PATH: Path = Path("mrio_pipeline", "input_data")
 
 if not RESULTS_DIR.is_dir():
