@@ -12,7 +12,8 @@ import pandas as pd
 import math
 
 
-def read_coi_exports(rpath: str, comm_of_interest: str, coi_code: int, comm_of_interest_code=None) -> pd.DataFrame:
+def read_coi_exports(rpath: str, comm_of_interest: str, coi_code: int, comm_of_interest_code=None,
+                     QUIET=True) -> pd.DataFrame:
     """Walks a given path and builds a dataframe of the exports of the given item from
     the given country using csv files from each folder in the path
 
@@ -55,7 +56,8 @@ def read_coi_exports(rpath: str, comm_of_interest: str, coi_code: int, comm_of_i
                 impacts_filtered["Consumer_ISO3"] = current_country_iso
                 coi_exports = pd.concat([coi_exports, impacts_filtered])
         else:
-            print(f"Couldn't find impacts_full.csv for {path} at {os.path.join(rpath, path, 'impacts_full.csv')}")
+            if not QUIET:
+                print(f"Couldn't find impacts_full.csv for {path} at {os.path.join(rpath, path, 'impacts_full.csv')}")
 
     if not coi_exports.empty:
         coi_exports["export_weight"] = (

@@ -67,7 +67,7 @@ with tqdm(total=len(countries) * len(item_code_list),
                 ITEM_OF_INTEREST: list[str] = db_entry.Item.to_list()
 
                 pbar.update(1)
-                pbar.set_postfix({"Country": COUNTRY_OF_INTEREST, "Item": ITEM_OF_INTEREST[0]})
+                pbar.set_postfix({"Country": COUNTRY_OF_INTEREST, "Item": ITEM_OF_INTEREST[0], "Code": item_code})
                 
                 # check if country produces that item at all
                 if len(crops_pdat[(crops_pdat["Area Code"] == country_code) & (crops_pdat["Item Code"] == item_code)]) < 1:
@@ -76,19 +76,16 @@ with tqdm(total=len(countries) * len(item_code_list),
                 # try:
                 leakage_results = estimate_leakage.return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
                                     DATA_PATH, item_code, countries=countries, production_data=pdat)
-                leakage_calc = leakage_results[0]
-                leakage_calc_per_kg = leakage_results[1]
-
-                # except ValueError:
-                #     leakage_calc = pd.DataFrame()
-                #     leakage_calc_per_kg = pd.DataFrame()
                 
-                leakage_calc.insert(0, "COUNTRY_OF_INTEREST", COUNTRY_OF_INTEREST)
-                leakage_calc.insert(1, "COUNTRY_OF_INTEREST_CODE", country_code)
-                # leakage_calc.insert(2, "ITEM_OF_INTEREST", ITEM_OF_INTEREST[0])
-     
-                cdf = pd.concat([cdf, leakage_calc])
-                cdf_per_kg = pd.concat([cdf_per_kg, leakage_calc_per_kg])
+                if leakage_results:
+                    leakage_calc = leakage_results[0]
+                    leakage_calc_per_kg = leakage_results[1]
+
+                    leakage_calc.insert(0, "COUNTRY_OF_INTEREST", COUNTRY_OF_INTEREST)
+                    leakage_calc.insert(1, "COUNTRY_OF_INTEREST_CODE", country_code)
+
+                    cdf = pd.concat([cdf, leakage_calc])
+                    cdf_per_kg = pd.concat([cdf_per_kg, leakage_calc_per_kg])
 
             cdf.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage.csv"),
                        index=False)

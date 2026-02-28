@@ -8,7 +8,8 @@ import _plot_funcs as pf
 
 def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH, 
                         DATA_PATH,
-                        item_code, countries, production_data):
+                        item_code, countries, production_data,
+                        QUIET=True):
     
     if COUNTRY_OF_INTEREST not in countries:
         print("Country not in set of countries")
@@ -40,16 +41,25 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
                                       countries[COUNTRY_OF_INTEREST], 
                                       comm_of_interest_code=item_code)
 
-    if len(coi_exports) == 0: 
-        raise ValueError(
-            f"Couldn't find any exports of {ITEM_OF_INTEREST} for {COUNTRY_OF_INTEREST}"
+    if len(coi_exports) == 0:
+        if not QUIET:
+            print(
+                f"Couldn't find any exports of {ITEM_OF_INTEREST} for {COUNTRY_OF_INTEREST}"
         )
+        return None
     
     if is_anim:
-        displaced_production_mass_kg = internal_yield_pasture_kg_m2.squeeze()
+        # this is for monogastric (i.e. no pasture land use) - assume land use leakage is entirely feed
+        if isinstance(internal_yield_pasture_kg_m2, pd.Series) and len(internal_yield_pasture_kg_m2) == 0:
+            displaced_production_mass_kg = 1.0
+        else:
+            displaced_production_mass_kg = float(internal_yield_pasture_kg_m2.squeeze())
     else:
-        displaced_production_mass_kg = internal_yield_arable_kg_m2.squeeze()
-
+        if isinstance(internal_yield_arable_kg_m2, pd.Series) and len(internal_yield_arable_kg_m2) == 0:
+            displaced_production_mass_kg = 1.0
+        else:
+            displaced_production_mass_kg = float(internal_yield_arable_kg_m2.squeeze())
+    
     coi_exports = coi_exports.reset_index()
 
     coi_exports["idisplaced_production_kg"] = displaced_production_mass_kg \
@@ -117,22 +127,23 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
     leakage_calc = coi_exports[[_ for _ in keep if _ not in ["Item", "Item_Code"]]].groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code"]).sum().reset_index()
     displaced_production_full = coi_exports.groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code", "Item", "Item_Code"]).sum().reset_index()
 
-    leakage_calc.to_csv("leakage_calc.csv", index=False)
-    displaced_production_full.to_csv("displaced_production_full.csv", index=False)
+    # debugging
+    # leakage_calc.to_csv("leakage_calc.csv", index=False)
+    # displaced_production_full.to_csv("displaced_production_full.csv", index=False)
 
     internal_rows = {
                     "Producer_ISO" : COUNTRY_OF_INTEREST,
                     "Producer_Country_Code" : countries[COUNTRY_OF_INTEREST],
                     "ItemT_Name" : ITEM_OF_INTEREST[0],
                     "ItemT_Code" : item_code,
-                    "idisplaced_production_kg" : - displaced_production_mass_kg.squeeze(),
-                    "pasture_m2_leakage" : - internal_land_use_pasture_m2_pkg.squeeze() * displaced_production_mass_kg.squeeze(),
-                    "arable_m2_leakage" : - internal_land_use_arable_m2_pkg.squeeze() * displaced_production_mass_kg.squeeze(),
-                    "land_use_total_m2_leakage" : -(internal_land_use_pasture_m2_pkg.squeeze() + internal_land_use_arable_m2_pkg.squeeze()) * displaced_production_mass_kg.squeeze(),
+                    "idisplaced_production_kg" : - displaced_production_mass_kg,
+                    "pasture_m2_leakage" : - internal_land_use_pasture_m2_pkg.squeeze() * displaced_production_mass_kg,
+                    "arable_m2_leakage" : - internal_land_use_arable_m2_pkg.squeeze() * displaced_production_mass_kg,
+                    "land_use_total_m2_leakage" : -(internal_land_use_pasture_m2_pkg.squeeze() + internal_land_use_arable_m2_pkg.squeeze()) * displaced_production_mass_kg,
                     "bd_leakage" : - internal_bd_pm2.squeeze(), 
                     "bd_leakage_err" : _internal["opp_cost_err"].squeeze() / 1E6,
-                    "swwu_l_leakage" : - _internal["SWWU_avg_calc"].squeeze() * displaced_production_mass_kg.squeeze() /  (1000 * internal_prov_tonnes),
-                    "ghg_kg_co2eq_leakage" : - _internal["GHG_avg_calc"].squeeze() * displaced_production_mass_kg.squeeze() /  (1000 * internal_prov_tonnes),
+                    "swwu_l_leakage" : - _internal["SWWU_avg_calc"].squeeze() * displaced_production_mass_kg /  (1000 * internal_prov_tonnes),
+                    "ghg_kg_co2eq_leakage" : - _internal["GHG_avg_calc"].squeeze() * displaced_production_mass_kg /  (1000 * internal_prov_tonnes),
                 }
     
     internal_anti_leakage = pd.DataFrame(internal_rows, index=[0])
@@ -154,10 +165,11 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
             "ghg_kg_co2eq_leakage"]
 
     for col in pkg_cols:
-        leakage_calc_per_kg[col] = leakage_calc_per_kg[col] / displaced_production_mass_kg.squeeze()
+        leakage_calc_per_kg[col] = leakage_calc_per_kg[col] / displaced_production_mass_kg
         leakage_calc_per_kg.rename(columns={col: f"{col}_per_kg"}, inplace=True) 
 
-    leakage_calc_per_kg.to_csv("leakage_calc_kg.csv", index=False)
+    # # debugging
+    # leakage_calc_per_kg.to_csv("leakage_calc_kg.csv", index=False)
 
     return (leakage_calc, leakage_calc_per_kg, displaced_production_full)
 
