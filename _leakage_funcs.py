@@ -1,14 +1,89 @@
-import os
-from typing import Any
-import pandas as pd
-import numpy as np
-# import matplotlib.pyplot as plt
-import _funcs_data as fd
-import _plot_funcs as pf
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Sep 12 10:53:22 2024
 
-def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH, 
+@author: Thomas Ball
+"""
+import os
+from turtle import fd
+from typing import Any, cast
+import numpy as np
+import pandas as pd
+
+import math
+
+def read_coi_exports(rpath: str, 
+                     coi_iso: str, 
+                     coi_code: int, 
+                     comm_of_interest_code=None,
+                     COMPREHENSIVE: bool = True, # run for exports too or just coi
+                     QUIET: bool = True) -> pd.DataFrame:
+    """Walks a given path and builds a dataframe of the exports of the given item from
+    the given country using csv files from each folder in the path
+    """
+    coi_exports: pd.DataFrame = pd.DataFrame()
+
+    if COMPREHENSIVE: 
+        paths = os.listdir(rpath)
+    elif not COMPREHENSIVE:
+        paths = [coi_iso]
+    else:
+        raise ValueError("Invalid value for COMPREHENSIVE parameter")
+    
+    for path in paths:
+        if len(path) != 3:
+            continue
+        if os.path.exists(os.path.join(rpath, path, "impacts_full.csv")):
+            
+            impacts_full: pd.DataFrame = pd.read_csv(
+                os.path.join(rpath, path, "impacts_full.csv"), index_col=0
+            )
+
+            impacts_filtered: pd.DataFrame = impacts_full[
+                                    impacts_full["ItemT_Code"] == comm_of_interest_code
+                                    ]
+            
+            impacts_self: pd.DataFrame = impacts_filtered[impacts_filtered["Producer_Country_Code"] == coi_code]
+
+            current_country_iso: str = path.upper()
+
+            if len(impacts_self) > 0:
+                import_ratio = (
+                    impacts_filtered.groupby("Country_ISO")["provenance"].sum()
+                    / impacts_filtered["provenance"].sum()
+                )
+                impacts_filtered["export_val"] = impacts_filtered.loc[
+                    impacts_filtered["Producer_Country_Code"] == coi_code, "provenance"
+                ].sum()
+                for c in impacts_filtered["Country_ISO"].unique():
+                    try:
+                        impacts_filtered.loc[impacts_filtered["Country_ISO"] == c, "import_ratio"] = import_ratio[c]
+                    except KeyError:
+                        impacts_filtered.loc[impacts_filtered["Country_ISO"] == c, "import_ratio"] = np.nan
+                impacts_filtered["Consumer_ISO3"] = current_country_iso
+                coi_exports = pd.concat([coi_exports, impacts_filtered])
+        else:
+            if not QUIET:
+                print(f"Couldn't find impacts_full.csv for {path} at {os.path.join(rpath, path, 'impacts_full.csv')}")
+
+    if not coi_exports.empty:
+        coi_exports["export_weight"] = (
+            coi_exports["export_val"] / coi_exports["export_val"].unique().sum()
+        )
+
+    return coi_exports
+
+def round_sig(x, sig=6):
+    if x == 0:
+        return 0
+    return round(x, sig - int(math.floor(math.log10(abs(x)))) - 1)
+
+def return_leakage_df(  COUNTRY_OF_INTEREST, 
+                        ITEM_OF_INTEREST : str, 
+                        RPATH, 
                         DATA_PATH,
                         item_code, countries, production_data,
+                        COMPREHENSIVE = True, # run for exports too or just coi
                         QUIET=True):
     
     if COUNTRY_OF_INTEREST not in countries:
@@ -16,10 +91,7 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
         raise ValueError
     
     production_data = production_data[production_data["Year"] == production_data["Year"].unique().max()]
-    yield_data: pd.DataFrame = production_data[production_data["Element"].astype(str).str.contains("Yield")]
-    cropdb: pd.DataFrame = pd.read_csv(  # type: ignore
-        os.path.join(DATA_PATH, "commodity_crosswalk.csv"))
-    
+
     # # calculate some leakage
     coi_impacts_data = pd.read_csv(os.path.join(RPATH, COUNTRY_OF_INTEREST, "impacts_full.csv"), index_col = 0)
     coi_impacts_item = coi_impacts_data[coi_impacts_data.ItemT_Code == item_code]
@@ -28,7 +100,6 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
     _internal = coi_impacts_item[coi_impacts_item["Producer_Country_Code"] == countries[COUNTRY_OF_INTEREST]]
     
     internal_bd_pm2 = _internal['bd_opp_cost_m2']
-    internal_bd_pm2_err = _internal['opp_cost_err'] / 1E6
 
     internal_prov_tonnes = _internal['provenance']
     internal_land_use_pasture_m2_pkg = _internal['Pasture_m2'] / (1000 * internal_prov_tonnes)
@@ -37,11 +108,13 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
     internal_yield_arable_kg_m2 = 1 / internal_land_use_arable_m2_pkg[internal_land_use_arable_m2_pkg > 0]
     internal_yield_pasture_kg_m2 = 1 / internal_land_use_pasture_m2_pkg[internal_land_use_pasture_m2_pkg > 0]
 
-    coi_exports = fd.read_coi_exports(RPATH, ITEM_OF_INTEREST, 
-                                      countries[COUNTRY_OF_INTEREST], 
-                                      comm_of_interest_code=item_code)
+    coi_exports = read_coi_exports( RPATH, COUNTRY_OF_INTEREST,
+                                    countries[COUNTRY_OF_INTEREST],
+                                    COMPREHENSIVE=COMPREHENSIVE, 
+                                    comm_of_interest_code=item_code,
+                                    QUIET=QUIET,)
 
-    if len(coi_exports) == 0:
+    if len(coi_exports) == 0:   
         if not QUIET:
             print(
                 f"Couldn't find any exports of {ITEM_OF_INTEREST} for {COUNTRY_OF_INTEREST}"
@@ -67,16 +140,16 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
                 * (coi_exports["import_ratio"] #/ np.nansum(coi_exports["import_ratio"])
                    )
     
-    coi_exports["pasture_m2_per_kg"] = (coi_exports['Pasture_m2'] / (1000 * coi_exports['provenance'])).apply(fd.round_sig, args=(6,))
-    coi_exports["arable_m2_per_kg"] = (coi_exports['Arable_m2'] / (1000 * coi_exports['provenance'])).apply(fd.round_sig, args=(6,))
-    coi_exports["land_use_total_m2_per_kg"] = (coi_exports["arable_m2_per_kg"] + coi_exports["pasture_m2_per_kg"]).apply(fd.round_sig, args=(6,))
+    coi_exports["pasture_m2_per_kg"] = (coi_exports['Pasture_m2'] / (1000 * coi_exports['provenance'])).apply(round_sig, args=(6,))
+    coi_exports["arable_m2_per_kg"] = (coi_exports['Arable_m2'] / (1000 * coi_exports['provenance'])).apply(round_sig, args=(6,))
+    coi_exports["land_use_total_m2_per_kg"] = (coi_exports["arable_m2_per_kg"] + coi_exports["pasture_m2_per_kg"]).apply(round_sig, args=(6,))
 
     coi_exports["bd_per_m2"] = coi_exports['bd_opp_cost_m2']
     coi_exports["bd_per_m2_err"] = coi_exports['opp_cost_err'] / 1E6
 
-    coi_exports["swwu_l_per_kg"] = (coi_exports['SWWU_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(fd.round_sig, args=(6,))
+    coi_exports["swwu_l_per_kg"] = (coi_exports['SWWU_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(round_sig, args=(6,))
 
-    coi_exports["ghg_kg_co2eq_per_kg"] = (coi_exports['GHG_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(fd.round_sig, args=(6,))
+    coi_exports["ghg_kg_co2eq_per_kg"] = (coi_exports['GHG_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(round_sig, args=(6,))
 
     incl = ["Consumer_Country_Code", "Consumer_ISO3", # consumer
             "Producer_Country_Code", "Country_ISO", # producer
@@ -86,7 +159,6 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
             "arable_m2_per_kg", 
             "land_use_total_m2_per_kg",
             "bd_per_m2", "bd_per_m2_err",
-            # "bd_per_kg", "bd_per_kg_err", 
             "swwu_l_per_kg",
             "ghg_kg_co2eq_per_kg", 
             "idisplaced_production_kg"]
@@ -127,10 +199,6 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
     leakage_calc = coi_exports[[_ for _ in keep if _ not in ["Item", "Item_Code"]]].groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code"]).sum().reset_index()
     displaced_production_full = coi_exports.groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code", "Item", "Item_Code"]).sum().reset_index()
 
-    # debugging
-    # leakage_calc.to_csv("leakage_calc.csv", index=False)
-    # displaced_production_full.to_csv("displaced_production_full.csv", index=False)
-
     internal_rows = {
                     "Producer_ISO" : COUNTRY_OF_INTEREST,
                     "Producer_Country_Code" : countries[COUNTRY_OF_INTEREST],
@@ -168,11 +236,4 @@ def return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST : str, RPATH,
         leakage_calc_per_kg[col] = leakage_calc_per_kg[col] / displaced_production_mass_kg
         leakage_calc_per_kg.rename(columns={col: f"{col}_per_kg"}, inplace=True) 
 
-    # # debugging
-    # leakage_calc_per_kg.to_csv("leakage_calc_kg.csv", index=False)
-
     return (leakage_calc, leakage_calc_per_kg, displaced_production_full)
-
-if __name__ == "__main__":
-    pass
-    

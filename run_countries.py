@@ -2,27 +2,33 @@
 """
 Created on Tue Aug 12 12:33:50 2025
 
-@author: tom
+@author: Tom B
 
 This code is inexcusably inefficient I have no doubt, I will not apologise for art.
 """
 import pandas as pd
-import estimate_leakage
+import _leakage_funcs
 import os
-# import faostat
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore', message='Workbook contains no default style')
 
-# CONSTANTS
-OVERWRITE = True
-RPATH: Path = Path("mrio_pipeline_results", "2021") # where the outputs of the Food model are
-RESULTS_DIR: Path = Path("results_leakage", "2021") # where to save stuff
 
-# these should stay the same if 'mrio pipeline' is in the same parent dir as this
-LIFE_IMPACTS_KG_PATH: Path = Path("mrio_pipeline", "input_data", "mapspam_outputs", "outputs", "2020", "processed_results_2020.csv") # as above but the result of 'plot_global_commodity_impacts'
+### Configuration variables ###
+OVERWRITE = True
+
+COMPREHENSIVE = True # whether to run for all exports of the item (True) or just the country of interest (False) valid when crops mainly imported or used domestically (e.g., the UK)
+    
+RESULTS_DIR: Path = Path("results_leakage", "2021") # where to save stuff
+RPATH: Path = Path("mrio_pipeline_results", "2021") # where the outputs of the Food model are
+QUIET = True # shhhh
+
+
+
+# these should stay the same if 'mrio pipeline' is in the same parent dir as this (and you want to run 2020)
+LIFE_IMPACTS_KG_PATH: Path = Path("mrio_pipeline", "input_data", "mapspam_outputs", "outputs", "2020", "processed_results_2020.csv")
 DATA_PATH: Path = Path("mrio_pipeline", "input_data")
 
 if not RESULTS_DIR.is_dir():
@@ -75,8 +81,9 @@ with tqdm(total=len(countries) * len(item_code_list),
                     continue
 
                 # try:
-                leakage_results = estimate_leakage.return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
-                                    DATA_PATH, item_code, countries=countries, production_data=pdat)
+                leakage_results = _leakage_funcs.return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
+                                    DATA_PATH, item_code, countries=countries, production_data=pdat,
+                                    COMPREHENSIVE=COMPREHENSIVE, QUIET=True)
                 
                 if leakage_results:
                     leakage_calc = leakage_results[0]
@@ -88,9 +95,12 @@ with tqdm(total=len(countries) * len(item_code_list),
                     cdf = pd.concat([cdf, leakage_calc])
                     cdf_per_kg = pd.concat([cdf_per_kg, leakage_calc_per_kg])
 
-            cdf.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage.csv"),
+            if not COMPREHENSIVE:
+                neqcomp_str = "NOEXP_"
+
+            cdf.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_{neqcomp_str}leakage.csv"),
                        index=False)
-            cdf_per_kg.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage_per_kg.csv"),
+            cdf_per_kg.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_{neqcomp_str}leakage_per_kg.csv"),
                               index=False)
 
     
