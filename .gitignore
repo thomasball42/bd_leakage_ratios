@@ -160,3 +160,8 @@ cython_debug/
 #.idea/
 data/Production_Crops_Livestock_E_All_Data_(Normalized).csv
 data/cached_results.csv
+
+# Extensification factors from Zenodo (https://zenodo.org/records/23190337), fetched by _get_extensification_data.py
+data/beta_crops.csv
+data/beta_animals.csv
+data/*.part

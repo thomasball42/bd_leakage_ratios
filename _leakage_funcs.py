@@ -3,237 +3,244 @@
 Created on Thu Sep 12 10:53:22 2024
 
 @author: Thomas Ball
+
+Market leakage of displaced production, computed for every country at once from
+FLMP's MRIO trade matrix. For one item, with R[consumer, producer]:
+
+    E = R / column sums     where each producer's output goes (export weights)
+    S = R / row sums        where each consumer's supply comes from (import ratios)
+    L = E^T S               L[C, p]: share of C's displaced production replaced by p
+
+The leakage per kg displaced in C is then sum_p L[C, p] * I[p] - I[C], where I is
+the per-kg production impact of each producer (feed included for animal products).
 """
-import os
-from turtle import fd
-from typing import Any, cast
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-import math
+# column stem in FLMP's prod_impacts_long table -> output column
+IMPACTS = {
+    "arable_area_m2_calc": "arable_m2",
+    "pasture_area_m2_calc": "pasture_m2",
+    "life_extinctions_per_sp_calc": "bd",
+    "ghg_prod_kgco2e_calc": "ghg_prod_kgco2e",
+    "ghg_coc_kgco2e_calc": "ghg_coc_kgco2e",
+}
+# outputs whose errors are carried through (summed linearly)
+WITH_ERR = ["bd", "ghg_prod_kgco2e", "ghg_coc_kgco2e"]
+VALUE_COLS = list(IMPACTS.values()) + [f"{col}_err" for col in WITH_ERR]
+SUMMARY_COLS = ["arable_m2", "pasture_m2", "land_use_total_m2", "bd", "ghg_prod_kgco2e", "ghg_coc_kgco2e"]
 
-def read_coi_exports(rpath: str, 
-                     coi_iso: str, 
-                     coi_code: int, 
-                     comm_of_interest_code=None,
-                     COMPREHENSIVE: bool = True, # run for exports too or just coi
-                     QUIET: bool = True) -> pd.DataFrame:
-    """Walks a given path and builds a dataframe of the exports of the given item from
-    the given country using csv files from each folder in the path
+
+def load_country_isos(data_dir: Path) -> dict[int, str]:
+    """FAOSTAT country code -> ISO3."""
+    codes = pd.read_csv(data_dir / "country_codes.csv", encoding="utf-8-sig", usecols=["ISO3", "FAOSTAT"])
+    codes = codes.dropna().drop_duplicates(subset="FAOSTAT")
+    return dict(zip(codes["FAOSTAT"].astype(int), codes["ISO3"]))
+
+
+def load_item_names(data_dir: Path) -> dict[int, str]:
+    """FAOSTAT item code -> item name."""
+    crosswalk = pd.read_csv(data_dir / "commodity_crosswalk.csv", usecols=["Item", "Item_Code"])
+    crosswalk = crosswalk.dropna().drop_duplicates(subset="Item_Code")
+    return dict(zip(crosswalk["Item_Code"].astype(int), crosswalk["Item"]))
+
+
+def load_trade_matrices(results_dir: Path, year: int) -> tuple[np.ndarray, dict[int, np.ndarray]]:
+    """FLMP's MRIO result as one dense consumer x producer matrix (tonnes) per
+    item, all on the same sorted index of country codes."""
+    path = Path(results_dir) / str(year) / ".mrio" / "TradeMatrix_import_dry_matter.csv"
+    tm = pd.read_csv(path, usecols=["Consumer_Country_Code", "Producer_Country_Code", "Item_Code", "Value"])
+    tm = tm[tm["Value"] > 0]
+
+    consumers = tm["Consumer_Country_Code"].astype(int).to_numpy()
+    producers = tm["Producer_Country_Code"].astype(int).to_numpy()
+    items = tm["Item_Code"].astype(int).to_numpy()
+    values = tm["Value"].to_numpy()
+
+    codes = np.union1d(consumers, producers)
+    consumer_idx = np.searchsorted(codes, consumers)
+    producer_idx = np.searchsorted(codes, producers)
+
+    matrices = {}
+    for item in np.unique(items):
+        rows = items == item
+        R = np.zeros((len(codes), len(codes)))
+        np.add.at(R, (consumer_idx[rows], producer_idx[rows]), values[rows])
+        matrices[int(item)] = R
+    return codes, matrices
+
+
+def replacement_shares(R: np.ndarray, comprehensive: bool = True, exclude_self: bool = False) -> np.ndarray:
+    """L[C, p]: share of country C's displaced production that is replaced by
+    producer p. Rows sum to 1 for every country that produces the item, bar a
+    country that consumes none of what it produces (when not comprehensive) or
+    is the item's only producer (when excluding self).
+
+    comprehensive: every consumer of C's production (C included) replaces its
+        share from its own supply mix. Otherwise only C's own consumers do,
+        i.e. L[C] = S[C].
+    exclude_self: C can't replace its own displaced production, so C is dropped
+        from each consumer's supply mix and the rest renormalised. Consumers that
+        were supplied by C alone turn to the world production mix (without C).
     """
-    coi_exports: pd.DataFrame = pd.DataFrame()
+    production = R.sum(axis=0)
+    supply = R.sum(axis=1)
+    produces = production > 0
 
-    if COMPREHENSIVE: 
-        paths = os.listdir(rpath)
-    elif not COMPREHENSIVE:
-        paths = [coi_iso]
+    if comprehensive:
+        E = np.divide(R, production, out=np.zeros_like(R), where=produces)
     else:
-        raise ValueError("Invalid value for COMPREHENSIVE parameter")
-    
-    for path in paths:
-        if len(path) != 3:
-            continue
-        if os.path.exists(os.path.join(rpath, path, "impacts_full.csv")):
-            
-            impacts_full: pd.DataFrame = pd.read_csv(
-                os.path.join(rpath, path, "impacts_full.csv"), index_col=0
-            )
+        E = np.diag(produces.astype(float))
 
-            impacts_filtered: pd.DataFrame = impacts_full[
-                                    impacts_full["ItemT_Code"] == comm_of_interest_code
-                                    ]
-            
-            impacts_self: pd.DataFrame = impacts_filtered[impacts_filtered["Producer_Country_Code"] == coi_code]
+    if not exclude_self:
+        S = np.divide(R, supply[:, None], out=np.zeros_like(R), where=supply[:, None] > 0)
+        return E.T @ S
 
-            current_country_iso: str = path.upper()
+    # W[c, C] = E[c, C] / supply of c from everyone but C
+    alt_supply = supply[:, None] - R
+    W = np.divide(E, alt_supply, out=np.zeros_like(R), where=alt_supply > 1e-9 * supply[:, None])
+    L = W.T @ R
+    np.fill_diagonal(L, 0)
 
-            if len(impacts_self) > 0:
-                import_ratio = (
-                    impacts_filtered.groupby("Country_ISO")["provenance"].sum()
-                    / impacts_filtered["provenance"].sum()
-                )
-                impacts_filtered["export_val"] = impacts_filtered.loc[
-                    impacts_filtered["Producer_Country_Code"] == coi_code, "provenance"
-                ].sum()
-                for c in impacts_filtered["Country_ISO"].unique():
-                    try:
-                        impacts_filtered.loc[impacts_filtered["Country_ISO"] == c, "import_ratio"] = import_ratio[c]
-                    except KeyError:
-                        impacts_filtered.loc[impacts_filtered["Country_ISO"] == c, "import_ratio"] = np.nan
-                impacts_filtered["Consumer_ISO3"] = current_country_iso
-                coi_exports = pd.concat([coi_exports, impacts_filtered])
-        else:
-            if not QUIET:
-                print(f"Couldn't find impacts_full.csv for {path} at {os.path.join(rpath, path, 'impacts_full.csv')}")
+    unallocated = np.where(produces, 1 - L.sum(axis=1), 0)
+    unallocated[unallocated < 1e-9] = 0
+    world = np.tile(production, (len(production), 1))
+    np.fill_diagonal(world, 0)
+    world_total = world.sum(axis=1, keepdims=True)
+    world = np.divide(world, world_total, out=np.zeros_like(world), where=world_total > 0)
+    return L + unallocated[:, None] * world
 
-    if not coi_exports.empty:
-        coi_exports["export_weight"] = (
-            coi_exports["export_val"] / coi_exports["export_val"].unique().sum()
-        )
 
-    return coi_exports
+def load_intensities(path: Path, codes: np.ndarray) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], dict[int, str]]:
+    """Per-kg production impacts from FLMP's prod_impacts_long table.
 
-def round_sig(x, sig=6):
-    if x == 0:
-        return 0
-    return round(x, sig - int(math.floor(math.log10(abs(x)))) - 1)
+    Returns, per item, a (country x VALUE_COLS) array on the `codes` index and a
+    mask of the countries with no FLMP value, which are given the item's
+    production-weighted world average instead. Also returns the item names.
+    """
+    df = pd.read_csv(path)
+    df = df[df["Effective_Producer_Code"].isin(codes)]
+    sources = {out: (f"{stem}_per_kg", stem) for stem, out in IMPACTS.items()}
+    sources.update({f"{out}_err": (f"{stem}_per_kg_err", f"{stem}_err") for stem, out in IMPACTS.items()})
 
-def return_leakage_df(  COUNTRY_OF_INTEREST, 
-                        ITEM_OF_INTEREST : str, 
-                        RPATH, 
-                        DATA_PATH,
-                        item_code, countries, production_data,
-                        COMPREHENSIVE = True, # run for exports too or just coi
-                        QUIET=True):
-    
-    if COUNTRY_OF_INTEREST not in countries:
-        print("Country not in set of countries")
-        raise ValueError
-    
-    production_data = production_data[production_data["Year"] == production_data["Year"].unique().max()]
+    intensities = {}
+    for item, g in df.groupby("ItemT_Code"):
+        idx = np.searchsorted(codes, g["Effective_Producer_Code"].astype(int))
+        values = np.full((len(codes), len(VALUE_COLS)), np.nan)
+        world = np.zeros(len(VALUE_COLS))
+        for j, col in enumerate(VALUE_COLS):
+            per_kg, total = sources[col]
+            values[idx, j] = g[per_kg].to_numpy()
+            usable = (g["production_tonnes"] > 0) & np.isfinite(g[total])
+            kg = g.loc[usable, "production_tonnes"].sum() * 1000
+            world[j] = g.loc[usable, total].sum() / kg if kg > 0 else np.nan
 
-    # # calculate some leakage
-    coi_impacts_data = pd.read_csv(os.path.join(RPATH, COUNTRY_OF_INTEREST, "impacts_full.csv"), index_col = 0)
-    coi_impacts_item = coi_impacts_data[coi_impacts_data.ItemT_Code == item_code]
-    is_anim = coi_impacts_item.Animal_Product.str.contains("Primary").any()
+        main = [VALUE_COLS.index(col) for col in IMPACTS.values()]
+        fallback = np.isnan(values[:, main]).any(axis=1)
+        values[fallback] = world
+        # the odd undefined (inf upstream) error also takes the world value
+        values = np.where(np.isnan(values), world, values)
+        intensities[int(item)] = (values, fallback)
 
-    _internal = coi_impacts_item[coi_impacts_item["Producer_Country_Code"] == countries[COUNTRY_OF_INTEREST]]
-    
-    internal_bd_pm2 = _internal['bd_opp_cost_m2']
+    names = df.drop_duplicates("ItemT_Code").set_index("ItemT_Code")["ItemT_Name"]
+    return intensities, {int(k): v for k, v in names.items()}
 
-    internal_prov_tonnes = _internal['provenance']
-    internal_land_use_pasture_m2_pkg = _internal['Pasture_m2'] / (1000 * internal_prov_tonnes)
-    internal_land_use_arable_m2_pkg = _internal['Arable_m2'] / (1000 * internal_prov_tonnes)
-    
-    internal_yield_arable_kg_m2 = 1 / internal_land_use_arable_m2_pkg[internal_land_use_arable_m2_pkg > 0]
-    internal_yield_pasture_kg_m2 = 1 / internal_land_use_pasture_m2_pkg[internal_land_use_pasture_m2_pkg > 0]
 
-    coi_exports = read_coi_exports( RPATH, COUNTRY_OF_INTEREST,
-                                    countries[COUNTRY_OF_INTEREST],
-                                    COMPREHENSIVE=COMPREHENSIVE, 
-                                    comm_of_interest_code=item_code,
-                                    QUIET=QUIET,)
+def load_extensification(value: float | str, std: float, data_dir: Path, year: int, codes: np.ndarray,
+                         items: list[int]) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Extensification factor of each producer and its standard deviation, per
+    item as arrays on the `codes` index, for leakage_land_use.
 
-    if len(coi_exports) == 0:   
-        if not QUIET:
-            print(
-                f"Couldn't find any exports of {ITEM_OF_INTEREST} for {COUNTRY_OF_INTEREST}"
-        )
-        return None
-    
-    if is_anim:
-        # this is for monogastric (i.e. no pasture land use) - assume land use leakage is entirely feed
-        if isinstance(internal_yield_pasture_kg_m2, pd.Series) and len(internal_yield_pasture_kg_m2) == 0:
-            displaced_production_mass_kg = 1.0
-        else:
-            displaced_production_mass_kg = float(internal_yield_pasture_kg_m2.squeeze())
-    else:
-        if isinstance(internal_yield_arable_kg_m2, pd.Series) and len(internal_yield_arable_kg_m2) == 0:
-            displaced_production_mass_kg = 1.0
-        else:
-            displaced_production_mass_kg = float(internal_yield_arable_kg_m2.squeeze())
-    
-    coi_exports = coi_exports.reset_index()
+    value: a float, used with `std` for every producer and item, or "beta" for
+        the per country x item betas (beta_{year} and se_{year}) in
+        data/beta_crops.csv and data/beta_animals.csv, `std` then unused.
+    """
+    if value == "beta":
+        raise NotImplementedError("EXTENSIFICATION_VALUE = 'beta' isn't implemented yet")
+    if isinstance(value, str):
+        raise ValueError(f"EXTENSIFICATION_VALUE must be a float or 'beta', not {value!r}")
+    return {item: (np.full(len(codes), float(value)), np.full(len(codes), float(std))) for item in items}
 
-    coi_exports["idisplaced_production_kg"] = displaced_production_mass_kg \
-                * coi_exports["export_weight"] \
-                * (coi_exports["import_ratio"] #/ np.nansum(coi_exports["import_ratio"])
-                   )
-    
-    coi_exports["pasture_m2_per_kg"] = (coi_exports['Pasture_m2'] / (1000 * coi_exports['provenance'])).apply(round_sig, args=(6,))
-    coi_exports["arable_m2_per_kg"] = (coi_exports['Arable_m2'] / (1000 * coi_exports['provenance'])).apply(round_sig, args=(6,))
-    coi_exports["land_use_total_m2_per_kg"] = (coi_exports["arable_m2_per_kg"] + coi_exports["pasture_m2_per_kg"]).apply(round_sig, args=(6,))
 
-    coi_exports["bd_per_m2"] = coi_exports['bd_opp_cost_m2']
-    coi_exports["bd_per_m2_err"] = coi_exports['opp_cost_err'] / 1E6
+def leakage_land_use(beta: np.ndarray, current_production: np.ndarray, kg_displaced: np.ndarray) -> np.ndarray:
+    """Land use (m2) of the extra production arriving at each replacing producer.
 
-    coi_exports["swwu_l_per_kg"] = (coi_exports['SWWU_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(round_sig, args=(6,))
+    beta: the producer's extensification factor for the item
+    current_production: the producer's current production of the item
+    kg_displaced: the extra production arriving at the producer, in kg per kg
+        displaced in the country of interest
+    """
+    raise NotImplementedError("leakage_land_use isn't written yet")
 
-    coi_exports["ghg_kg_co2eq_per_kg"] = (coi_exports['GHG_avg_calc'] / (1000 * coi_exports['provenance'])).fillna(0).apply(round_sig, args=(6,))
 
-    incl = ["Consumer_Country_Code", "Consumer_ISO3", # consumer
-            "Producer_Country_Code", "Country_ISO", # producer
-            "ItemT_Name", "ItemT_Code",
-            "Item", "Item_Code",
-            "pasture_m2_per_kg", 
-            "arable_m2_per_kg", 
-            "land_use_total_m2_per_kg",
-            "bd_per_m2", "bd_per_m2_err",
-            "swwu_l_per_kg",
-            "ghg_kg_co2eq_per_kg", 
-            "idisplaced_production_kg"]
-    
+def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray, coi_idx: np.ndarray,
+                     extensification: np.ndarray, extensification_std: np.ndarray,
+                     current_production: np.ndarray) -> pd.DataFrame:
+    """Leakage per kg displaced, for the countries at index `coi_idx`.
 
-    coi_exports = coi_exports[incl]
-    coi_exports.rename(columns={"Consumer_ISO3": "Consumer_ISO",
-                                              "Country_ISO": "Producer_ISO"}, 
-                                              inplace=True)
+    One 'replacement' row per producer p with L[C, p] > 0 (its share times its
+    per-kg impacts), and one 'displaced' row with C's own impacts negated.
+    `extensification`, `extensification_std` and `current_production` are on
+    the `codes` index. The replacement rows also get p's extensification factor
+    and its std, and the land use of the extra production from
+    leakage_land_use; the displaced rows get NaN for these.
+    """
+    rows_c, producer_idx = np.nonzero(L[coi_idx] > 0)
+    country_idx = coi_idx[rows_c]
+    share = L[country_idx, producer_idx]
+    land_use = leakage_land_use(extensification[producer_idx], current_production[producer_idx], share)
 
-    coi_exports["pasture_m2_leakage"] = coi_exports["pasture_m2_per_kg"] * coi_exports["idisplaced_production_kg"]
-    coi_exports["arable_m2_leakage"] = coi_exports["arable_m2_per_kg"] * coi_exports["idisplaced_production_kg"]
-    coi_exports["land_use_total_m2_leakage"] = coi_exports["land_use_total_m2_per_kg"] * coi_exports["idisplaced_production_kg"]
-    coi_exports["bd_leakage"] = coi_exports["bd_per_m2"] * coi_exports["land_use_total_m2_leakage"]
-    coi_exports["bd_leakage_err"] = coi_exports["bd_per_m2_err"] * coi_exports["land_use_total_m2_leakage"]
-    coi_exports["swwu_l_leakage"] = coi_exports["swwu_l_per_kg"] * coi_exports["idisplaced_production_kg"]   
-    coi_exports["ghg_kg_co2eq_leakage"] = coi_exports["ghg_kg_co2eq_per_kg"] * coi_exports["idisplaced_production_kg"]
+    displaced = -intensity[coi_idx]
+    err_cols = [VALUE_COLS.index(f"{col}_err") for col in WITH_ERR]
+    displaced[:, err_cols] *= -1  # errors stay positive
 
-    keep = ["Producer_ISO", "Producer_Country_Code", 
-            "ItemT_Name", "ItemT_Code",
-            "Item", "Item_Code",
-            "idisplaced_production_kg",
-            "pasture_m2_leakage", 
-            "arable_m2_leakage", 
-            "land_use_total_m2_leakage", 
-            "bd_leakage", 
-            "bd_leakage_err", 
-            "swwu_l_leakage", 
-            "ghg_kg_co2eq_leakage"]
+    not_replacement = np.full(len(coi_idx), np.nan)
+    out = pd.DataFrame({
+        "coi_idx": np.concatenate([country_idx, coi_idx]),
+        "producer_idx": np.concatenate([producer_idx, coi_idx]),
+        "flow": ["replacement"] * len(country_idx) + ["displaced"] * len(coi_idx),
+        "displaced_production_kg": np.concatenate([share, -np.ones(len(coi_idx))]),
+        "extensification": np.concatenate([extensification[producer_idx], not_replacement]),
+        "extensification_std": np.concatenate([extensification_std[producer_idx], not_replacement]),
+        "land_use_leakage_m2": np.concatenate([land_use, not_replacement]),
+        "fallback_intensity": np.concatenate([fallback[producer_idx], fallback[coi_idx]]),
+    })
+    values = np.vstack([share[:, None] * intensity[producer_idx], displaced])
+    for j, col in enumerate(VALUE_COLS):
+        out[col] = values[:, j]
+    out["land_use_total_m2"] = out["arable_m2"] + out["pasture_m2"]
+    return out
 
-    coi_exports = coi_exports[keep]
-    
-    coi_exports["Producer_ISO"] = coi_exports["Producer_ISO"].astype(str).str.strip()
-    coi_exports["Producer_Country_Code"] = coi_exports["Producer_Country_Code"].astype(int)
-    coi_exports["ItemT_Name"] = coi_exports["ItemT_Name"].astype(str).str.strip()
-    coi_exports["ItemT_Code"] = coi_exports["ItemT_Code"].astype(int)
 
-    leakage_calc = coi_exports[[_ for _ in keep if _ not in ["Item", "Item_Code"]]].groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code"]).sum().reset_index()
-    displaced_production_full = coi_exports.groupby(["Producer_ISO", "Producer_Country_Code", "ItemT_Name", "ItemT_Code", "Item", "Item_Code"]).sum().reset_index()
+def per_m2_of_spared_land(leakage: pd.DataFrame) -> pd.DataFrame:
+    """Rescale per-kg leakage to per m2 of land spared in the country of interest
+    (its own arable + pasture per kg, feed land included)."""
+    keys = ["COUNTRY_OF_INTEREST_CODE", "ItemT_Code"]
+    spared = leakage.loc[leakage["flow"] == "displaced", keys + ["land_use_total_m2"]]
+    spared = spared.rename(columns={"land_use_total_m2": "_spared_m2"})
+    out = leakage.merge(spared, on=keys, how="left")
+    scale = -out.pop("_spared_m2").where(lambda s: s != 0)
+    for col in ["displaced_production_kg", "land_use_total_m2", "land_use_leakage_m2"] + VALUE_COLS:
+        out[col] = out[col] / scale
+    return out
 
-    internal_rows = {
-                    "Producer_ISO" : COUNTRY_OF_INTEREST,
-                    "Producer_Country_Code" : countries[COUNTRY_OF_INTEREST],
-                    "ItemT_Name" : ITEM_OF_INTEREST[0],
-                    "ItemT_Code" : item_code,
-                    "idisplaced_production_kg" : - displaced_production_mass_kg,
-                    "pasture_m2_leakage" : - internal_land_use_pasture_m2_pkg.squeeze() * displaced_production_mass_kg,
-                    "arable_m2_leakage" : - internal_land_use_arable_m2_pkg.squeeze() * displaced_production_mass_kg,
-                    "land_use_total_m2_leakage" : -(internal_land_use_pasture_m2_pkg.squeeze() + internal_land_use_arable_m2_pkg.squeeze()) * displaced_production_mass_kg,
-                    "bd_leakage" : - internal_bd_pm2.squeeze(), 
-                    "bd_leakage_err" : _internal["opp_cost_err"].squeeze() / 1E6,
-                    "swwu_l_leakage" : - _internal["SWWU_avg_calc"].squeeze() * displaced_production_mass_kg /  (1000 * internal_prov_tonnes),
-                    "ghg_kg_co2eq_leakage" : - _internal["GHG_avg_calc"].squeeze() * displaced_production_mass_kg /  (1000 * internal_prov_tonnes),
-                }
-    
-    internal_anti_leakage = pd.DataFrame(internal_rows, index=[0])
 
-    leakage_calc = pd.concat([leakage_calc, internal_anti_leakage])
-    
-    leakage_calc = leakage_calc.loc[:, ~(leakage_calc.columns.str.contains("Unnamed"))]
-
-    leakage_calc_per_kg = leakage_calc.copy()
-
-    pkg_cols = [
-            "idisplaced_production_kg",
-            "pasture_m2_leakage", 
-            "arable_m2_leakage", 
-            "land_use_total_m2_leakage", 
-            "bd_leakage", 
-            "bd_leakage_err", 
-            "swwu_l_leakage", 
-            "ghg_kg_co2eq_leakage"]
-
-    for col in pkg_cols:
-        leakage_calc_per_kg[col] = leakage_calc_per_kg[col] / displaced_production_mass_kg
-        leakage_calc_per_kg.rename(columns={col: f"{col}_per_kg"}, inplace=True) 
-
-    return (leakage_calc, leakage_calc_per_kg, displaced_production_full)
+def summarise(leakage: pd.DataFrame) -> pd.DataFrame:
+    """Per country x item: impact spared at home, impact leaked elsewhere and
+    their ratio (all per kg displaced), plus the share of the replacement that
+    used world-average impacts."""
+    keys = ["COUNTRY_OF_INTEREST", "COUNTRY_OF_INTEREST_CODE", "ItemT_Name", "ItemT_Code"]
+    replacement = leakage[leakage["flow"] == "replacement"]
+    leaked = replacement.groupby(keys)[SUMMARY_COLS].sum().add_suffix("_leaked")
+    spared = -leakage[leakage["flow"] == "displaced"].set_index(keys)[SUMMARY_COLS].add_suffix("_spared")
+    summary = spared.join(leaked, how="left")
+    for col in SUMMARY_COLS:
+        summary[f"{col}_ratio"] = summary[f"{col}_leaked"] / summary[f"{col}_spared"].where(lambda s: s != 0)
+    summary["replaced_share"] = replacement.groupby(keys)["displaced_production_kg"].sum()
+    summary["fallback_share"] = (
+        replacement[replacement["fallback_intensity"]].groupby(keys)["displaced_production_kg"].sum()
+    )
+    summary["fallback_share"] = summary["fallback_share"].fillna(0)
+    return summary.reset_index()

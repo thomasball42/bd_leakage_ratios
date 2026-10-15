@@ -4,117 +4,101 @@ Created on Tue Aug 12 12:33:50 2025
 
 @author: Tom B
 
-This code is inexcusably inefficient I have no doubt, I will not apologise for art.
+Market leakage of displaced production for every country x item. Inputs:
+    FLMP_RESULTS_DIR  a FLMP results dir, for {year}/.mrio/TradeMatrix_import_dry_matter.csv
+    IMPACTS_PATH      per-kg production impacts, built from FLMP_RESULTS_DIR by
+                      _build_bd_prod_impacts_matrix.py if missing
+    DATA_DIR          country_codes.csv and commodity_crosswalk.csv, plus beta_crops.csv
+                      and beta_animals.csv for EXTENSIFICATION_VALUE = "beta"
 """
-import pandas as pd
-import _leakage_funcs
-import os
-from tqdm import tqdm
-import numpy as np
-from pathlib import Path
-import warnings
-warnings.filterwarnings('ignore', message='Workbook contains no default style')
 
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
+import _build_bd_prod_impacts_matrix
+import _leakage_funcs
 
 ### Configuration variables ###
-OVERWRITE = True
+YEAR = 2021
+FLMP_RESULTS_DIR: Path = Path("/scratch/tsb42/outputs/flmp_results/flmp_results_261009")  # the FLMP results_dir
+RESULTS_DIR = Path("../..") / "outputs" / "leakage_results" / "leakage_results_261009"
 
-COMPREHENSIVE = True # whether to run for all exports of the item (True) or just the country of interest (False) valid when crops mainly imported or used domestically (e.g., the UK)
-    
-RESULTS_DIR: Path = Path("results_leakage", "2021") # where to save stuff
-RPATH: Path = Path("mrio_pipeline_results", "2021") # where the outputs of the Food model are
-QUIET = True # shhhh
-
+EXTENSIFICATION_VALUE: float | str = 0.0  # extensification factor passed to _leakage_funcs.leakage_land_use: a float (~0 to ~1) for every producer and item, or "beta" for the per country x item values in data/beta_*.csv
+EXTENSIFICATION_STD = 0.0  # its standard deviation, when EXTENSIFICATION_VALUE is a float (the betas carry their own)
 
 
-# these should stay the same if 'mrio pipeline' is in the same parent dir as this (and you want to run 2020)
-LIFE_IMPACTS_KG_PATH: Path = Path("mrio_pipeline", "input_data", "mapspam_outputs", "outputs", "2020", "processed_results_2020.csv")
-DATA_PATH: Path = Path("mrio_pipeline", "input_data")
+IMPACTS_PATH: Path = FLMP_RESULTS_DIR / "impacts_matrices" / f"prod_impacts_long_{YEAR}.csv"  # where _build_bd_prod_impacts_matrix writes it
+DATA_DIR: Path = Path("data")
 
-if not RESULTS_DIR.is_dir():
-    RESULTS_DIR.mkdir(exist_ok=True, parents=True)
+COUNTRIES: list[str] | None = None  # ISO3 codes, e.g. ["GBR"]; None runs every country
 
-cropdb: pd.DataFrame = pd.read_csv(  # type: ignore
-    DATA_PATH / "commodity_crosswalk.csv",
-    ) 
+COMPREHENSIVE = True  # whether all consumers of the country's production replace it (True) or just the country itself (False) - valid when crops mainly used domestically (e.g., the UK)
+EXCLUDE_SELF = False  # whether the country itself is barred from replacing its own displaced production
 
-pdat = pd.read_csv(DATA_PATH / "Production_Crops_Livestock_E_All_Data_(Normalized).csv", encoding="latin-1", low_memory=False)
-crops_pdat = pdat[(pdat.Element=="Production")&(pdat["Item Code"].isin(cropdb.Item_Code))]
-anims_pdat = pdat[(pdat.Element=="Production")&(pdat["Item Code"].isin(cropdb[cropdb.SPAM_name.isin(["ruminant meat", "meat", "eggs"])].Item_Code))]
+RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 
-ccodes: pd.DataFrame = pd.read_excel(  # type: ignore
-    DATA_PATH / "nocsDataExport_20251021-164754.xlsx")
+if not IMPACTS_PATH.exists():
+    print(f"{IMPACTS_PATH} not found, building it from {FLMP_RESULTS_DIR}")
+    _build_bd_prod_impacts_matrix.main(FLMP_RESULTS_DIR, YEAR, DATA_DIR)
 
-countries: dict[str, int] = {}
-for dirname in os.listdir(RPATH):
-    if os.path.isdir(os.path.join(RPATH, dirname)) and len(dirname) == 3:
-        countries[dirname.upper()] = ccodes.loc[
-            ccodes["ISO3"] == dirname.upper(), "FAOSTAT"
-        ].item()
+isos = _leakage_funcs.load_country_isos(DATA_DIR)
+item_names = _leakage_funcs.load_item_names(DATA_DIR)
+codes, matrices = _leakage_funcs.load_trade_matrices(FLMP_RESULTS_DIR, YEAR)
+intensities, impact_item_names = _leakage_funcs.load_intensities(IMPACTS_PATH, codes)
+items = sorted(set(matrices) & set(intensities))
+extensification = _leakage_funcs.load_extensification(EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, DATA_DIR, YEAR,
+                                                      codes, items)
 
-countries = {
-                "GBR" : 229, 
-                # "CRI" : 48
-             }
+if COUNTRIES is None:
+    coi_idx = np.array([i for i, code in enumerate(codes) if code in isos])
+else:
+    code_of = {iso: code for code, iso in isos.items()}
+    missing = [iso for iso in COUNTRIES if code_of.get(iso) not in codes]
+    if missing:
+        raise ValueError(f"Not in the FLMP trade matrix: {missing}")
+    coi_idx = np.searchsorted(codes, [code_of[iso] for iso in COUNTRIES])
 
-item_code_list = set(crops_pdat["Item Code"].unique().tolist() + anims_pdat["Item Code"].unique().tolist())
+no_impacts = sorted(set(matrices) - set(intensities))
+if no_impacts:
+    print(f"Skipping {len(no_impacts)} traded items with no FLMP impacts: {no_impacts}")
 
-with tqdm(total=len(countries) * len(item_code_list), 
-          desc="Processing countries and items") as pbar:
-    for COUNTRY_OF_INTEREST, country_code in countries.items():
-        
-        if not os.path.isfile(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_leakage.csv")) or OVERWRITE:
-            cdf: pd.DataFrame = pd.DataFrame()
-            cdf_per_kg: pd.DataFrame = pd.DataFrame()
-            
-            for item_code in item_code_list:    
-                
-                db_entry = cropdb[cropdb.Item_Code == item_code]
+tables = []
+for item_code in tqdm(items, desc="Processing items"):
+    R = matrices[item_code]
+    producing_idx = coi_idx[R[:, coi_idx].sum(axis=0) > 0]
+    if len(producing_idx) == 0:
+        continue
+    L = _leakage_funcs.replacement_shares(R, comprehensive=COMPREHENSIVE, exclude_self=EXCLUDE_SELF)
+    intensity, fallback = intensities[item_code]
+    ext, ext_std = extensification[item_code]
+    current_production = np.full(len(codes), np.nan)  # TODO: each producer's current production of item_code, on the codes index
+    table = _leakage_funcs.leakage_for_item(L, intensity, fallback, producing_idx, ext, ext_std, current_production)
+    table["ItemT_Code"] = item_code
+    table["ItemT_Name"] = item_names.get(item_code, impact_item_names.get(item_code))
+    tables.append(table)
 
-                ITEM_OF_INTEREST: list[str] = db_entry.Item.to_list()
+leakage = pd.concat(tables, ignore_index=True)
+leakage["COUNTRY_OF_INTEREST_CODE"] = codes[leakage["coi_idx"]]
+leakage["COUNTRY_OF_INTEREST"] = leakage["COUNTRY_OF_INTEREST_CODE"].map(isos)
+leakage["Producer_Country_Code"] = codes[leakage["producer_idx"]]
+leakage["Producer_ISO"] = leakage["Producer_Country_Code"].map(isos)
+leakage = leakage[
+    ["COUNTRY_OF_INTEREST", "COUNTRY_OF_INTEREST_CODE", "flow", "Producer_ISO", "Producer_Country_Code",
+     "ItemT_Name", "ItemT_Code", "displaced_production_kg", "extensification", "extensification_std", "land_use_leakage_m2", "arable_m2", "pasture_m2", "land_use_total_m2",
+     "bd", "bd_err", "ghg_prod_kgco2e", "ghg_prod_kgco2e_err", "ghg_coc_kgco2e", "ghg_coc_kgco2e_err",
+     "fallback_intensity"]
+]
+leakage_per_m2 = _leakage_funcs.per_m2_of_spared_land(leakage)
 
-                pbar.update(1)
-                pbar.set_postfix({"Country": COUNTRY_OF_INTEREST, "Item": ITEM_OF_INTEREST[0], "Code": item_code})
-                
-                # check if country produces that item at all
-                if len(crops_pdat[(crops_pdat["Area Code"] == country_code) & (crops_pdat["Item Code"] == item_code)]) < 1:
-                    continue
+prefix = (("" if COMPREHENSIVE else "NOEXP_") + ("NOSELF_" if EXCLUDE_SELF else "")
+          + f"EXT{EXTENSIFICATION_VALUE}_")
+for iso, country_leakage in leakage.groupby("COUNTRY_OF_INTEREST"):
+    country_leakage.to_csv(RESULTS_DIR / f"{iso}_{prefix}leakage_per_kg.csv", index=False)
+for iso, country_leakage in leakage_per_m2.groupby("COUNTRY_OF_INTEREST"):
+    country_leakage.to_csv(RESULTS_DIR / f"{iso}_{prefix}leakage.csv", index=False)
+_leakage_funcs.summarise(leakage).to_csv(RESULTS_DIR / f"{prefix}leakage_summary_per_kg.csv", index=False)
 
-                # try:
-                leakage_results = _leakage_funcs.return_leakage_df(COUNTRY_OF_INTEREST, ITEM_OF_INTEREST, RPATH,
-                                    DATA_PATH, item_code, countries=countries, production_data=pdat,
-                                    COMPREHENSIVE=COMPREHENSIVE, QUIET=True)
-                
-                if leakage_results:
-                    leakage_calc = leakage_results[0]
-                    leakage_calc_per_kg = leakage_results[1]
-
-                    leakage_calc.insert(0, "COUNTRY_OF_INTEREST", COUNTRY_OF_INTEREST)
-                    leakage_calc.insert(1, "COUNTRY_OF_INTEREST_CODE", country_code)
-
-                    cdf = pd.concat([cdf, leakage_calc])
-                    cdf_per_kg = pd.concat([cdf_per_kg, leakage_calc_per_kg])
-
-            if not COMPREHENSIVE:
-                neqcomp_str = "NOEXP_"
-
-            cdf.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_{neqcomp_str}leakage.csv"),
-                       index=False)
-            cdf_per_kg.to_csv(os.path.join(RESULTS_DIR, f"{COUNTRY_OF_INTEREST}_{neqcomp_str}leakage_per_kg.csv"),
-                              index=False)
-
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+print(f"Wrote leakage for {leakage['COUNTRY_OF_INTEREST'].nunique()} countries to {RESULTS_DIR}")
