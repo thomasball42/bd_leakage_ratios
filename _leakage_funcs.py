@@ -164,15 +164,19 @@ def load_extensification(value: float | str, std: float, data_dir: Path, year: i
     return {item: (np.full(len(codes), float(value)), np.full(len(codes), float(std))) for item in items}
 
 
-def leakage_land_use(beta: np.ndarray, current_production: np.ndarray, kg_displaced: np.ndarray) -> np.ndarray:
+def leakage_land_use(beta: np.ndarray, current_production: np.ndarray, current_land_use: np.ndarray, kg_displaced: np.ndarray) -> np.ndarray:
     """Land use (m2) of the extra production arriving at each replacing producer.
 
     beta: the producer's extensification factor for the item
     current_production: the producer's current production of the item
-    kg_displaced: the extra production arriving at the producer, in kg per kg
+    current_land_use: the producer's current land use for the item
+    kg_displaced: the extra production arriving at the producer, in kg per kg   
         displaced in the country of interest
+
+    ###If beta is 1, growth in land use is linear with production growth.
     """
-    raise NotImplementedError("leakage_land_use isn't written yet")
+    return current_land_use * ((((kg_displaced+current_production) / current_production) ** beta) - 1)
+
 
 
 def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray, coi_idx: np.ndarray,
