@@ -23,8 +23,11 @@ RECORD_KEY = "provenance"  # the section a run's record adds to its config
 SETTINGS = {
     "run": ["run_name", "year", "countries"],
     "paths": ["flmp_results_dir", "results_dir", "impacts_dir", "data_dir"],
+    "displacement": ["unit", "sizes"],
     "replacement": ["comprehensive", "exclude_self"],
-    "extensification": ["value", "std", "clipping"],
+    "extensification": ["use_beta", "value", "std", "clipping"],
+    "monte_carlo": ["draws", "seed", "percentiles"],
+    "outputs": ["per_kg", "per_m2"],
 }
 PACKAGES = ["numpy", "pandas", "tqdm"]
 MAX_UNTRACKED_BYTES = 1 << 20  # untracked files up to this size go in the record's patch, bigger ones are only listed
@@ -47,6 +50,36 @@ def load(path: Path) -> dict:
     run_name = config["run"]["run_name"]
     if not isinstance(run_name, str) or not run_name or "/" in run_name:
         raise ValueError(f"{path}: run.run_name must be a folder name, not {run_name!r}")
+    def number(x):
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+    unit, sizes = config["displacement"]["unit"], config["displacement"]["sizes"]
+    if unit not in ("kg", "share"):
+        problems.append(f"displacement.unit must be 'kg' or 'share', not {unit!r}")
+    if not isinstance(sizes, list) or not sizes or not all(number(s) and s > 0 for s in sizes):
+        problems.append(f"displacement.sizes must be a list of numbers above 0, not {sizes!r}")
+    elif unit == "share" and max(sizes) > 1:
+        problems.append(f"displacement.sizes are shares of production, so can't be above 1: {sizes}")
+    use_beta, value, std = (config["extensification"][key] for key in ["use_beta", "value", "std"])
+    if not isinstance(use_beta, bool):
+        problems.append(f"extensification.use_beta must be true or false, not {use_beta!r}")
+    elif not use_beta:
+        if not number(value):
+            problems.append(f"extensification.value must be a number when use_beta is false, not {value!r}")
+        if not number(std) or std < 0:
+            problems.append(f"extensification.std must be a number from 0 when use_beta is false, not {std!r}")
+    draws, seed, percentiles = (config["monte_carlo"][key] for key in ["draws", "seed", "percentiles"])
+    if not isinstance(draws, int) or isinstance(draws, bool) or draws < 0 or draws == 1:
+        problems.append(f"monte_carlo.draws must be 0 (central values only) or a whole number from 2, not {draws!r}")
+    if not isinstance(seed, int) or isinstance(seed, bool):
+        problems.append(f"monte_carlo.seed must be a whole number, not {seed!r}")
+    if not isinstance(percentiles, list) or not all(number(q) and 0 <= q <= 100 for q in percentiles):
+        problems.append(f"monte_carlo.percentiles must be a list of numbers from 0 to 100, not {percentiles!r}")
+    for key in SETTINGS["outputs"]:
+        if not isinstance(config["outputs"][key], bool):
+            problems.append(f"outputs.{key} must be true or false, not {config['outputs'][key]!r}")
+    if problems:
+        raise ValueError(f"{path}: " + "; ".join(problems))
 
     if record is not None:
         recorded, current = record["repository"], repository()

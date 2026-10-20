@@ -8,16 +8,16 @@ Market leakage of displaced production for every country x item, with the settin
 in a config.json (see the README): `python run_countries.py [config.json]`. Inputs:
     FLMP_RESULTS_DIR  a FLMP results dir, for {year}/.mrio/TradeMatrix_import_dry_matter.csv
                       (only read from)
-    IMPACTS_PATH      per-kg production impacts, and
+    IMPACTS_PATH      per-kg production impacts and production, and
     FEED_MIX_PATH     the feed by crop and origin per kg of each animal product, both
                       built from FLMP_RESULTS_DIR into IMPACTS_DIR by
                       _build_bd_prod_impacts_matrix.py if missing
     DATA_DIR          country_codes.csv and commodity_crosswalk.csv, plus beta_crops.csv
-                      and beta_animals.csv from _get_extensification_data.py, for
-                      producers' current production and land use (and the betas, for
-                      EXTENSIFICATION_VALUE = "beta")
-The results go to RESULTS_DIR/RUN_NAME, with the run's record (its config plus the
-repository version and input checksums) as config.json, from which it can be rerun.
+                      and beta_animals.csv from _get_extensification_data.py, for the
+                      betas (beta_{year}, se_{year}) of FLMP's year
+For each displacement size, the results go to RESULTS_DIR/RUN_NAME, with the run's
+record (its config plus the repository version and input checksums) as config.json,
+from which it can be rerun.
 """
 
 import argparse
@@ -39,7 +39,7 @@ config = _run_config.load(args.config)
 
 ### Configuration variables, from the config (relative paths from the repository folder) ###
 RUN_NAME: str = config["run"]["run_name"]
-YEAR: int = config["run"]["year"]
+YEAR: int = config["run"]["year"]  # of the FLMP results and of the betas
 COUNTRIES: list[str] | None = config["run"]["countries"]  # ISO3 codes, e.g. ["GBR"]; None runs every country
 
 FLMP_RESULTS_DIR = _run_config.resolve(config["paths"]["flmp_results_dir"])
@@ -51,12 +51,23 @@ IMPACTS_PATH = IMPACTS_DIR / f"prod_impacts_long_{YEAR}.csv"
 FEED_MIX_PATH = IMPACTS_DIR / f"feed_mix_long_{YEAR}.csv"
 DATA_DIR = _run_config.resolve(config["paths"]["data_dir"])
 
+# kg displaced in each country of interest, or a share of its FLMP production of the item
+SIZE_UNIT: str = config["displacement"]["unit"]
+SIZES: list[float] = config["displacement"]["sizes"]
 COMPREHENSIVE: bool = config["replacement"]["comprehensive"]
 EXCLUDE_SELF: bool = config["replacement"]["exclude_self"]
 
-EXTENSIFICATION_VALUE: float | str = config["extensification"]["value"]
-EXTENSIFICATION_STD: float = config["extensification"]["std"]
+USE_BETA: bool = config["extensification"]["use_beta"]  # the betas in DATA_DIR, or else VALUE and STD for every one
+EXTENSIFICATION_VALUE: float | None = config["extensification"]["value"]
+EXTENSIFICATION_STD: float | None = config["extensification"]["std"]
 CLIPPING = None if config["extensification"]["clipping"] is None else tuple(config["extensification"]["clipping"])
+
+DRAWS: int = config["monte_carlo"]["draws"]
+SEED: int = config["monte_carlo"]["seed"]
+PERCENTILES: list[float] = config["monte_carlo"]["percentiles"]
+
+PER_KG: bool = config["outputs"]["per_kg"]
+PER_M2: bool = config["outputs"]["per_m2"]
 
 RUN_DIR.mkdir(exist_ok=True, parents=True)
 _run_config.check_run_dir(config, RUN_DIR)
@@ -68,12 +79,20 @@ if not (IMPACTS_PATH.exists() and FEED_MIX_PATH.exists()):
 isos = _leakage_funcs.load_country_isos(DATA_DIR)
 item_names = _leakage_funcs.load_item_names(DATA_DIR)
 codes, matrices = _leakage_funcs.load_trade_matrices(FLMP_RESULTS_DIR, YEAR)
-intensities, impact_item_names = _leakage_funcs.load_intensities(IMPACTS_PATH, codes)
+intensities, production, impact_item_names = _leakage_funcs.load_intensities(IMPACTS_PATH, codes)
+for item_code in production:  # where prod_impacts_long has none, the trade matrix's production
+    if item_code in matrices:
+        traded = matrices[item_code].sum(axis=0) * 1000
+        production[item_code] = np.where(production[item_code] > 0, production[item_code],
+                                         np.where(traded > 0, traded, np.nan))
 items = sorted(set(matrices) & set(intensities))
 feed_mix = _leakage_funcs.load_feed_mix(FEED_MIX_PATH, codes)
 feed_items = sorted({feed_item for mix in feed_mix.values() for feed_item in mix["feed_item"]})
-extensification = _leakage_funcs.load_extensification(EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, CLIPPING, DATA_DIR,
-                                                      YEAR, codes, sorted(set(items) | set(feed_items)), intensities)
+pasture_based = _leakage_funcs.pasture_based_production(intensities, production, len(codes))
+beta_hat, beta_se, estimates = _leakage_funcs.load_extensification(
+    USE_BETA, EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, DATA_DIR, YEAR, codes, sorted(set(items) | set(feed_items)),
+    intensities)
+betas = _leakage_funcs.draw_betas(beta_hat, beta_se, CLIPPING, DRAWS, SEED)
 
 if COUNTRIES is None:
     coi_idx = np.array([i for i, code in enumerate(codes) if code in isos])
@@ -87,53 +106,83 @@ else:
 no_impacts = sorted(set(matrices) - set(intensities))
 if no_impacts:
     print(f"Skipping {len(no_impacts)} traded items with no FLMP impacts: {no_impacts}")
-no_extensification = [item for item in sorted(set(items) | set(feed_items))
-                      if np.isnan(extensification[item][0]).any(axis=1).all()]
-if no_extensification:
-    print(f"No extensification data for {len(no_extensification)} items, so no {_leakage_funcs.EXT_COLS} for them "
-          f"and their feed left out of animal products': {no_extensification}")
+no_betas = [item for item in sorted(set(items) | set(feed_items))
+            if item not in _leakage_funcs.PASTURE_ITEMS and (estimates[item][0] < 0).all()]
+if no_betas:
+    print(f"No betas for {len(no_betas)} items, so no extensified results for them, and their feed left out of "
+          f"animal products': {no_betas}")
 
-tables = []
-for item_code in tqdm(items, desc="Processing items"):
-    R = matrices[item_code]
-    producing_idx = coi_idx[R[:, coi_idx].sum(axis=0) > 0]
-    if len(producing_idx) == 0:
-        continue
-    L = _leakage_funcs.replacement_shares(R, comprehensive=COMPREHENSIVE, exclude_self=EXCLUDE_SELF)
-    intensity, fallback = intensities[item_code]
-    ext, ext_fallback = extensification[item_code]
-    sources = _leakage_funcs.land_sources(item_code, intensities, extensification, feed_mix)
-    table = _leakage_funcs.leakage_for_item(L, intensity, fallback, producing_idx, ext, ext_fallback, sources)
-    table["ItemT_Code"] = item_code
-    table["ItemT_Name"] = item_names.get(item_code, impact_item_names.get(item_code))
-    tables.append(table)
 
-leakage = pd.concat(tables, ignore_index=True)
-leakage["COUNTRY_OF_INTEREST_CODE"] = codes[leakage["coi_idx"]]
-leakage["COUNTRY_OF_INTEREST"] = leakage["COUNTRY_OF_INTEREST_CODE"].map(isos)
-leakage["Producer_Country_Code"] = codes[leakage["producer_idx"]]
-leakage["Producer_ISO"] = leakage["Producer_Country_Code"].map(isos)
-leakage = leakage[
-    ["COUNTRY_OF_INTEREST", "COUNTRY_OF_INTEREST_CODE", "flow", "Producer_ISO", "Producer_Country_Code",
-     "ItemT_Name", "ItemT_Code", "displaced_production_kg", "extensification", "extensification_std",
-     *_leakage_funcs.EXT_COLS, "arable_m2", "pasture_m2", "land_use_total_m2",
-     "bd", "bd_err", "ghg_prod_kgco2e", "ghg_prod_kgco2e_err", "ghg_coc_kgco2e", "ghg_coc_kgco2e_err",
-     "fallback_intensity", "fallback_extensification"]
-]
-leakage_per_m2 = _leakage_funcs.per_m2_of_spared_land(leakage)
+def label(table: pd.DataFrame, item_code: int, size: float) -> pd.DataFrame:
+    """Add the item, the size and the countries' codes and ISO3s to a table from
+    leakage_for_item, in place of its coi_idx and producer_idx."""
+    out = pd.DataFrame({
+        "COUNTRY_OF_INTEREST": [isos.get(code) for code in codes[table["coi_idx"]]],
+        "COUNTRY_OF_INTEREST_CODE": codes[table["coi_idx"]],
+    })
+    if "producer_idx" in table:
+        out["flow"] = table["flow"].to_numpy()
+        out["Producer_ISO"] = [isos.get(code) for code in codes[table["producer_idx"]]]
+        out["Producer_Country_Code"] = codes[table["producer_idx"]]
+    out["ItemT_Name"] = item_names.get(item_code, impact_item_names.get(item_code))
+    out["ItemT_Code"] = item_code
+    out["size"] = size
+    rest = table.drop(columns=[col for col in ["coi_idx", "producer_idx", "flow"] if col in table])
+    return pd.concat([out, rest.reset_index(drop=True)], axis=1)
 
-prefix = (("" if COMPREHENSIVE else "NOEXP_") + ("NOSELF_" if EXCLUDE_SELF else "")
-          + f"EXT{EXTENSIFICATION_VALUE}_")
-for iso, country_leakage in leakage.groupby("COUNTRY_OF_INTEREST"):
-    country_leakage.to_csv(RUN_DIR / f"{iso}_{prefix}leakage_per_kg.csv", index=False)
-for iso, country_leakage in leakage_per_m2.groupby("COUNTRY_OF_INTEREST"):
-    country_leakage.to_csv(RUN_DIR / f"{iso}_{prefix}leakage.csv", index=False)
-_leakage_funcs.summarise(leakage).to_csv(RUN_DIR / f"{prefix}leakage_summary_per_kg.csv", index=False)
+
+written = set()
+
+
+def write(table: pd.DataFrame, path: Path) -> None:
+    """Write `table` to `path`, replacing any earlier file the first time this run
+    writes it and appending after that."""
+    table.to_csv(path, mode="a" if path in written else "w", header=path not in written, index=False)
+    written.add(path)
+
+
+for size in SIZES:
+    mains, per_kgs, summaries = [], [], []
+    for item_code in tqdm(items, desc=f"Displacing {size} {SIZE_UNIT}"):
+        R = matrices[item_code]
+        producing_idx = coi_idx[R[:, coi_idx].sum(axis=0) > 0]
+        if len(producing_idx) == 0:
+            continue
+        L = _leakage_funcs.replacement_shares(R, comprehensive=COMPREHENSIVE, exclude_self=EXCLUDE_SELF)
+        intensity, fallback = intensities[item_code]
+        sources = _leakage_funcs.land_sources(item_code, intensities, production, pasture_based, estimates, feed_mix)
+        displaced_kg = (np.full(len(producing_idx), float(size)) if SIZE_UNIT == "kg"
+                        else size * production[item_code][producing_idx])
+        main, per_kg, summary = _leakage_funcs.leakage_for_item(
+            L, intensity, fallback, producing_idx, sources, displaced_kg, estimates[item_code], betas, PERCENTILES,
+            production[item_code], pasture_based if item_code in _leakage_funcs.PASTURE_ITEMS else None)
+        mains.append(label(main, item_code, size))
+        summaries.append(label(summary, item_code, size))
+        if PER_KG or PER_M2:
+            per_kgs.append(label(per_kg, item_code, size))
+
+    main = pd.concat(mains, ignore_index=True)
+    summary = pd.concat(summaries, ignore_index=True)
+    unextensified = summary["land_use_m2_spared"].isna() & ~summary["ItemT_Code"].isin(no_betas)
+    if unextensified.any():
+        print(f"No extensified results for {unextensified.sum()} country x items displacing {size} {SIZE_UNIT}, where "
+              f"a land source would lose more than it produces, or with no data for any of their land")
+    for iso, country in main.groupby("COUNTRY_OF_INTEREST"):
+        write(country, RUN_DIR / f"{iso}_leakage.csv")
+    write(summary, RUN_DIR / "leakage_summary.csv")
+    if per_kgs:
+        per_kg = pd.concat(per_kgs, ignore_index=True)
+        if PER_KG:
+            for iso, country in per_kg.groupby("COUNTRY_OF_INTEREST"):
+                write(country, RUN_DIR / f"{iso}_leakage_per_kg.csv")
+        if PER_M2:
+            for iso, country in _leakage_funcs.per_m2_of_spared_land(per_kg).groupby("COUNTRY_OF_INTEREST"):
+                write(country, RUN_DIR / f"{iso}_leakage_per_m2.csv")
 
 inputs = [FLMP_RESULTS_DIR / str(YEAR) / ".mrio" / "TradeMatrix_import_dry_matter.csv", IMPACTS_PATH, FEED_MIX_PATH]
 inputs += [DATA_DIR / name for name in ["country_codes.csv", "commodity_crosswalk.csv", "beta_crops.csv",
                                         "beta_animals.csv"]]
 record_path = _run_config.write_record(config, args.config, RUN_DIR, inputs)
 
-print(f"Wrote leakage for {leakage['COUNTRY_OF_INTEREST'].nunique()} countries to {RUN_DIR}, "
-      f"and the run's record to {record_path}")
+print(f"Wrote leakage for {main['COUNTRY_OF_INTEREST'].nunique()} countries and {len(SIZES)} displacement sizes to "
+      f"{RUN_DIR}, and the run's record to {record_path}")

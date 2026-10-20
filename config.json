@@ -10,13 +10,27 @@
     "impacts_dir": null,
     "data_dir": "data"
   },
+  "displacement": {
+    "unit": "kg",
+    "sizes": [1]
+  },
   "replacement": {
     "comprehensive": true,
     "exclude_self": false
   },
   "extensification": {
+    "use_beta": false,
     "value": 0.0,
     "std": 0.0,
     "clipping": [0, null]
+  },
+  "monte_carlo": {
+    "draws": 1000,
+    "seed": 0,
+    "percentiles": [5, 50, 95]
+  },
+  "outputs": {
+    "per_kg": false,
+    "per_m2": false
   }
 }

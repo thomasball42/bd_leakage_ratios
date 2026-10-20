@@ -4,27 +4,37 @@ Calcultes market leakage of displaced agricultural production: when a country pr
 ## Inputs
 
 1. An FLMP results dir (`paths.flmp_results_dir`), from [FLMP](https://github.com/louis-de-neve/mrio_pipeline) run for the year you want. It's only read from: the trade matrix `{year}/.mrio/TradeMatrix_import_dry_matter.csv`, and for the build below the feed matrix and every `{year}/*/impacts_full.csv`.
-2. `prod_impacts_long_{year}.csv` and `feed_mix_long_{year}.csv` in `paths.impacts_dir`: per-kg production impacts by producing country and item, and the feed by crop and origin per kg of each animal product by producing country. If either is missing, `run_countries.py` builds them first with `_build_bd_prod_impacts_matrix.py`. To build them on their own, run `python _build_bd_prod_impacts_matrix.py --year {year} --results-dir {flmp_results_dir} --out-dir {impacts_dir}`.
-3. `data/`: `country_codes.csv` and `commodity_crosswalk.csv`, already in this repo, and `beta_crops.csv` and `beta_animals.csv`, downloaded by `python _get_extensification_data.py`.
+2. `prod_impacts_long_{year}.csv` and `feed_mix_long_{year}.csv` in `paths.impacts_dir`: per-kg production impacts and production by producing country and item, and the feed by crop and origin per kg of each animal product by producing country. If either is missing, `run_countries.py` builds them first with `_build_bd_prod_impacts_matrix.py`. To build them on their own, run `python _build_bd_prod_impacts_matrix.py --year {year} --results-dir {flmp_results_dir} --out-dir {impacts_dir}`.
+3. `data/`: `country_codes.csv` and `commodity_crosswalk.csv`, already in this repo, and `beta_crops.csv` and `beta_animals.csv`, downloaded by `python _get_extensification_data.py`. Only their `beta_{year}` and `se_{year}` columns are used, for the FLMP year.
 
-Then run `python run_countries.py`, which uses the repository's `config.json`, or `python run_countries.py path/to/config.json`. All countries and items for one year take about a minute, plus a minute and a half the first time to build the impacts matrices.
+Then run `python run_countries.py`, which uses the repository's `config.json`, or `python run_countries.py path/to/config.json`.
+
+For all countries and items, each displacement size takes about 6 minutes with 1,000 Monte Carlo draws, or about 1.5 minutes with 100. Building the impacts matrices takes another minute and a half the first time. Peak memory is about 2 GB at 1,000 draws, and each size writes about 0.5 GB of results.
 
 ## Configuration (`config.json`)
 
 | Setting | |
 |---|---|
 | `run.run_name` | The run's folder name, under `paths.results_dir`. |
-| `run.year` | The year of the FLMP results and of the betas (`beta_{year}`, `se_{year}`). |
+| `run.year` | The year of the FLMP results and of the betas (`beta_{year}`, `se_{year}`). Everything uses this one year. |
 | `run.countries` | ISO3 codes of the countries of interest, e.g. `["GBR"]`, or `null` for every country. |
 | `paths.flmp_results_dir` | The FLMP results dir. |
 | `paths.results_dir` | Where the run folders go. |
 | `paths.impacts_dir` | Where `prod_impacts_long` and `feed_mix_long` are read from, and built if missing. `null` for `{results_dir}/{run_name}/impacts_matrices`; point several runs on the same FLMP results at one folder to build them only once. |
 | `paths.data_dir` | The folder with the files in Inputs 3. |
+| `displacement.unit` | `"kg"`, or `"share"` for a share of each country of interest's FLMP production of the item. |
+| `displacement.sizes` | The displacement sizes to run, in that unit, e.g. `[1]` kg or `[0.001, 0.01, 0.1, 0.5]` of production (shares can't be above 1). Every size uses the same Monte Carlo draws. |
 | `replacement.comprehensive` | See Options. |
 | `replacement.exclude_self` | See Options. |
-| `extensification.value` | The extensification factor: a number for every producer and item, or `"beta"`. See Options. |
-| `extensification.std` | Its standard deviation, when `value` is a number (the betas carry their own). |
-| `extensification.clipping` | `[lower, upper]` bounds the betas are clipped to, `null` for no bound, e.g. `[0, null]` clips at 0 but not above; or `null` for no clipping. A numeric `value` isn't clipped. |
+| `extensification.use_beta` | `true` to use the betas in `data/beta_*.csv` (`value` and `std` are then ignored), or `false` to use `value` and `std` in place of every beta and se there. See Options. |
+| `extensification.value` | The extensification factor used in place of every beta, when `use_beta` is `false`. |
+| `extensification.std` | The standard deviation used in place of every beta's se, when `use_beta` is `false`. |
+| `extensification.clipping` | `[lower, upper]` bounds the betas are clipped to, central and drawn, with `null` for no bound, e.g. `[0, null]` clips at 0 but not above; or `null` for no clipping. |
+| `monte_carlo.draws` | The number of Monte Carlo draws of the betas, or 0 for central values only. |
+| `monte_carlo.seed` | The random seed for the draws. |
+| `monte_carlo.percentiles` | The percentiles of the draws to report, e.g. `[5, 50, 95]`. |
+| `outputs.per_kg` | Also write the per-kg files (see Outputs). |
+| `outputs.per_m2` | Also write the per m² of spared land files. |
 
 Relative paths are from the repository folder.
 
@@ -36,6 +46,8 @@ Each run writes its record, `config.json`, into its folder when it finishes. Tha
 - any uncommitted changes, as one patch on that commit, with untracked files up to 1 MB included as new files (larger ones are only listed);
 - the Python and package versions;
 - the md5 of every input file read.
+
+The record includes the Monte Carlo seed, so a rerun gives identical draws.
 
 To recreate a run:
 1. `git checkout` the recorded commit, and `git apply` the uncommitted changes if there are any.
@@ -52,24 +64,56 @@ For each item, with FLMP's MRIO result R (consumers × producers):
 - S = R / row sums: where each consumer gets its supply.
 - L = EᵀS: L[C, p] is the share of C's displaced production replaced by producer p.
 
-The leakage per kg displaced in C is Σ_p L[C, p]·I[p] − I[C], where I is the per-kg production impact. For animal products, I is the pasture at the producer plus the feed it uses per kg produced, each feed crop priced where it was grown (recovered from FLMP's feed footprints by the matrix script).
+When C displaces m kg (a displacement size), producer p replaces L[C, p]·m kg.
 
-Extensification: the same leakage is also given with land use, and the impacts that follow it (extinctions and carbon opportunity cost), changing less (or more) than production. The change in each land source goes through `leakage_land_use` in `_leakage_funcs.py` with that source's own extensification factor β, current production and land use. The sources are a crop's own land, an animal product's pasture, and each of its feed crops where they were grown. This applies to C's displaced production (−1 kg) and to each producer's replacement share alike. Each source's impacts are scaled by its extensified over its linear land change, which is ≈ β for the kg sizes here. Production GHG isn't scaled.
+**Extensification.** Land use, and the impacts that follow it (extinctions and carbon opportunity cost), change less (or more) than production. The change at each land source goes through `leakage_land_use` in `_leakage_funcs.py`, A·[((Q + Δ)/Q)^β − 1], with:
+- that source's beta β;
+- its FLMP production Q for the run year (`production_tonnes` in `prod_impacts_long`, or the trade matrix's where that has none);
+- its FLMP land A, its FLMP land per kg times Q.
+
+The land sources are:
+- a crop's own arable land;
+- an animal product's pasture: its own pasture per kg, on the scale of its producer's FLMP production of all its pasture-based products, as its pasture beta is defined that way;
+- each of an animal product's feed crops where they were grown, with feed by crop and origin from `feed_mix_long` (recovered from FLMP's feed footprints by the matrix script).
+
+Within each country of interest's scenario, the changes at each source are netted before the curve is applied: C's loss against what C replaces itself, and feed origins shared between producers. Each row then gets its pro rata part. Each source's extinctions and carbon opportunity cost are scaled by its extensified over its linear land change, and production GHG isn't scaled. Because A/Q is FLMP's own land per kg, at β = 1 the extensified land equals FLMP's linear land.
+
+Because the curve isn't linear, the results depend on the displacement size relative to each source's production. At small sizes they're the marginal values: β times each source's land per kg. For β < 1, a larger displacement frees more land per kg at home and needs less per kg elsewhere, so leaked ÷ spared falls. A country × item where a source would lose more than it produces has no extensified results.
+
+**Monte Carlo.** Each draw takes every beta estimate (each row of `data/beta_*.csv`, World rows included) from Normal(β, se), independently, and clips it if `clipping` is set. A beta gets the same draw everywhere it's used in that draw: on both sides of a scenario, in every scenario, and as a feed origin. Producers with no beta of their own share the World row's. The results are reported at the central betas, with percentiles and the standard deviation over the draws. FLMP's own errors aren't drawn: they're carried separately, scaled by the central extensification, for combining downstream.
 
 Options:
 - `replacement.comprehensive: false`: only C's own consumers replace the production (L[C] = S[C]).
 - `replacement.exclude_self: true`: C can't replace its own displaced production. C is dropped from each consumer's supply mix and the rest renormalised. Consumers that only bought from C turn to the world production mix.
 - With the default `replacement.exclude_self: false`, part of the replacement comes from C itself.
-- `extensification.value`: the extensification factor passed, with each replacing producer's current production and land use and the kg arriving there, to `leakage_land_use` in `_leakage_funcs.py`, which gives the land use of the leaked production. It's a number for every producer and item, with `extensification.std` as its standard deviation, or `"beta"` for the per country × item factors (`beta_{year}`, `se_{year}`) in `data/beta_crops.csv` and `data/beta_animals.csv`, clipped to `extensification.clipping` (the default `[0, null]` sets negative betas to 0). Current production and land use always come from those files' `current_*` columns. A producer with no factor, or no (or zero) production or land use, gets the item's World row instead. Animal items (`PASTURE_ITEMS` in `_leakage_funcs.py`) take the per-country "All pasture-based animal products" row of `beta_animals.csv`, with the land use set to the item's own FLMP pasture per kg times that production, so feed-fed animals (zero pasture) only extensify through their feed.
+- `extensification.use_beta`:
+  - `true` uses each country × item's `beta_{year}` and `se_{year}`. A producer with no beta of its own gets the item's World row.
+  - `false` replaces every beta in those files with `extensification.value`, and every se with `extensification.std`, so each country × item still gets its own draw.
+  - Animal items (`PASTURE_ITEMS` in `_leakage_funcs.py`) take their country's "All pasture-based animal products" row of `beta_animals.csv`. Where they have no pasture (pigs, poultry, eggs), they have no pasture beta and extensify only through their feed.
 
 ## Outputs (`{results_dir}/{run_name}/`)
 
-- `{ISO}_leakage_per_kg.csv`: per kg displaced. There is one `replacement` row per replacing producer and one `displaced` row with C's own impacts negated.
-  - Columns: arable and pasture land (m², always separate; pasture is 0 for crops, and arable for animal products is feed land), extinctions (`bd`), production GHG and one-off carbon opportunity cost (kg CO2e), the last three with errors summed linearly.
-  - `fallback_intensity` marks producers with no FLMP value, which get the item's production-weighted world average.
-  - `extensification` and `extensification_std` are the producer's factor (for animal products, its pasture's). `land_use_leakage_m2`, `bd_ext` and `ghg_coc_kgco2e_ext` are the extensified land use and impacts, on both the `displaced` and `replacement` rows. `fallback_extensification` marks producers that got the World row for any of their own inputs.
-- `{ISO}_leakage.csv`: the same, per m² of land spared in C (its arable + pasture per kg).
-- `leakage_summary_per_kg.csv`: per country × item, the impacts spared at home, leaked elsewhere and their ratio, extensified ones included.
-- File names get `NOEXP_` / `NOSELF_` prefixes for the non-default options, and an `EXT{extensification.value}_` prefix.
+Every file has a `size` column, and has rows for every displacement size.
+
+- `{ISO}_leakage.csv` (the main results): one `replacement` row for each producer replacing C's displaced production, and one `displaced` row for C's own loss.
+  - **Driving values:** `displaced_kg` (m) and `production_change_kg` (the row's kg: L[C, p]·m, or −m).
+  - **Extensified results, for that kg:**
+    - `land_use_m2`, `bd` (extinctions) and `ghg_coc_kgco2e` (one-off carbon opportunity cost), each with `_p{q}` percentiles and `_sd` over the draws;
+    - `bd_err` and `ghg_coc_kgco2e_err`, FLMP's own errors scaled the same way;
+    - `ghg_prod_kgco2e` and `_err`, production GHG, which isn't extensified.
+  - **Betas:** `extensification` and `extensification_std` are the producer's central beta and se. For animal products these are its pasture's, which are NaN where it has no pasture. `fallback_extensification` marks producers using the World row's beta, and `fallback_intensity` producers with no FLMP impacts, which get the item's production-weighted world average.
+  - **Current state, all FLMP for the run year:**
+    - `production_kg`;
+    - `arable_m2_current` and `pasture_m2_current` (arable is feed land for animal products), and `land_use_current_m2`, their sum;
+    - for animal products, `pasture_based_production_kg`, the scale of the pasture curve.
+    - Downstream, the displaced share of production is `production_change_kg / production_kg`, and the relative land change is `land_use_m2 / land_use_current_m2`.
+- `leakage_summary.csv`: one row per country × item × size.
+  - For `land_use_m2`, `bd` and `ghg_coc_kgco2e`: the amount spared at home (`_spared`), leaked elsewhere (`_leaked`), the net leakage (`_net`, leaked − spared) and their ratio (`_ratio`). Each has its percentiles and sd, from the same draws, so the betas shared between the two sides are accounted for. The ratio's spread is wide where the spared amount's spread is near zero; net leakage is better behaved.
+  - FLMP errors spared and leaked, production GHG spared and leaked, `replaced_share` and `fallback_share`.
+  - C's `displaced_kg`, `production_kg`, `land_use_current_m2` and `pasture_based_production_kg`.
+- `{ISO}_leakage_per_kg.csv` (with `outputs.per_kg`): the same rows per kg displaced, at the central betas.
+  - The linear impacts: arable and pasture land (m², always separate; pasture is 0 for crops, and arable for animal products is feed land), extinctions (`bd`), production GHG and carbon opportunity cost, the last three with errors summed linearly.
+  - The extensified ones: `land_use_leakage_m2`, `bd_ext` and `ghg_coc_kgco2e_ext`.
+- `{ISO}_leakage_per_m2.csv` (with `outputs.per_m2`): the per-kg rows per m² of land spared in C (its linear arable + pasture per kg).
 - `config.json`: the run's record (see Recreating a run).
 - `impacts_matrices/`: the matrix script's outputs, when `paths.impacts_dir` is `null`.
