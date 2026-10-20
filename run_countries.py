@@ -4,19 +4,23 @@ Created on Tue Aug 12 12:33:50 2025
 
 @author: Tom B
 
-Market leakage of displaced production for every country x item. Inputs:
+Market leakage of displaced production for every country x item, with the settings
+in a config.json (see the README): `python run_countries.py [config.json]`. Inputs:
     FLMP_RESULTS_DIR  a FLMP results dir, for {year}/.mrio/TradeMatrix_import_dry_matter.csv
                       (only read from)
     IMPACTS_PATH      per-kg production impacts, and
     FEED_MIX_PATH     the feed by crop and origin per kg of each animal product, both
-                      built from FLMP_RESULTS_DIR into RESULTS_DIR/impacts_matrices by
+                      built from FLMP_RESULTS_DIR into IMPACTS_DIR by
                       _build_bd_prod_impacts_matrix.py if missing
     DATA_DIR          country_codes.csv and commodity_crosswalk.csv, plus beta_crops.csv
                       and beta_animals.csv from _get_extensification_data.py, for
                       producers' current production and land use (and the betas, for
                       EXTENSIFICATION_VALUE = "beta")
+The results go to RESULTS_DIR/RUN_NAME, with the run's record (its config plus the
+repository version and input checksums) as config.json, from which it can be rerun.
 """
 
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -25,27 +29,37 @@ from tqdm import tqdm
 
 import _build_bd_prod_impacts_matrix
 import _leakage_funcs
+import _run_config
 
-### Configuration variables ###
-YEAR = 2021
-FLMP_RESULTS_DIR = Path("/maps/tsb42/flmp/flmp_results/261019")  # the FLMP results_dir
-RESULTS_DIR = Path("/maps/tsb42/leakage_flows/bd_leakage_ratios_results/261019")
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument("config", nargs="?", type=Path, default=_run_config.REPO_DIR / "config.json",
+                    help="a config.json, or a run's record of one (default: the repository's config.json)")
+args = parser.parse_args()
+config = _run_config.load(args.config)
 
-EXTENSIFICATION_VALUE: float | str = 0.0  # extensification factor passed to _leakage_funcs.leakage_land_use: a float (~0 to ~1) for every producer and item, or "beta" for the per country x item values in data/beta_*.csv
-EXTENSIFICATION_STD = 0.0  # its standard deviation, when EXTENSIFICATION_VALUE is a float (the betas carry their own)
+### Configuration variables, from the config (relative paths from the repository folder) ###
+RUN_NAME: str = config["run"]["run_name"]
+YEAR: int = config["run"]["year"]
+COUNTRIES: list[str] | None = config["run"]["countries"]  # ISO3 codes, e.g. ["GBR"]; None runs every country
 
+FLMP_RESULTS_DIR = _run_config.resolve(config["paths"]["flmp_results_dir"])
+RESULTS_DIR = _run_config.resolve(config["paths"]["results_dir"])
+RUN_DIR = RESULTS_DIR / RUN_NAME
+# where _build_bd_prod_impacts_matrix writes its outputs; None for RUN_DIR/impacts_matrices
+IMPACTS_DIR = _run_config.resolve(config["paths"]["impacts_dir"]) or RUN_DIR / "impacts_matrices"
+IMPACTS_PATH = IMPACTS_DIR / f"prod_impacts_long_{YEAR}.csv"
+FEED_MIX_PATH = IMPACTS_DIR / f"feed_mix_long_{YEAR}.csv"
+DATA_DIR = _run_config.resolve(config["paths"]["data_dir"])
 
-IMPACTS_DIR = RESULTS_DIR / "impacts_matrices"  # where _build_bd_prod_impacts_matrix writes its outputs
-IMPACTS_PATH: Path = IMPACTS_DIR / f"prod_impacts_long_{YEAR}.csv"
-FEED_MIX_PATH: Path = IMPACTS_DIR / f"feed_mix_long_{YEAR}.csv"
-DATA_DIR: Path = Path("data")
+COMPREHENSIVE: bool = config["replacement"]["comprehensive"]
+EXCLUDE_SELF: bool = config["replacement"]["exclude_self"]
 
-COUNTRIES: list[str] | None = None  # ISO3 codes, e.g. ["GBR"]; None runs every country
+EXTENSIFICATION_VALUE: float | str = config["extensification"]["value"]
+EXTENSIFICATION_STD: float = config["extensification"]["std"]
+CLIPPING = None if config["extensification"]["clipping"] is None else tuple(config["extensification"]["clipping"])
 
-COMPREHENSIVE = True  # whether all consumers of the country's production replace it (True) or just the country itself (False) - valid when crops mainly used domestically (e.g., the UK)
-EXCLUDE_SELF = False  # whether the country itself is barred from replacing its own displaced production
-
-RESULTS_DIR.mkdir(exist_ok=True, parents=True)
+RUN_DIR.mkdir(exist_ok=True, parents=True)
+_run_config.check_run_dir(config, RUN_DIR)
 
 if not (IMPACTS_PATH.exists() and FEED_MIX_PATH.exists()):
     print(f"{IMPACTS_PATH} or {FEED_MIX_PATH} not found, building them from {FLMP_RESULTS_DIR}")
@@ -58,8 +72,8 @@ intensities, impact_item_names = _leakage_funcs.load_intensities(IMPACTS_PATH, c
 items = sorted(set(matrices) & set(intensities))
 feed_mix = _leakage_funcs.load_feed_mix(FEED_MIX_PATH, codes)
 feed_items = sorted({feed_item for mix in feed_mix.values() for feed_item in mix["feed_item"]})
-extensification = _leakage_funcs.load_extensification(EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, DATA_DIR, YEAR,
-                                                      codes, sorted(set(items) | set(feed_items)), intensities)
+extensification = _leakage_funcs.load_extensification(EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, CLIPPING, DATA_DIR,
+                                                      YEAR, codes, sorted(set(items) | set(feed_items)), intensities)
 
 if COUNTRIES is None:
     coi_idx = np.array([i for i, code in enumerate(codes) if code in isos])
@@ -111,9 +125,15 @@ leakage_per_m2 = _leakage_funcs.per_m2_of_spared_land(leakage)
 prefix = (("" if COMPREHENSIVE else "NOEXP_") + ("NOSELF_" if EXCLUDE_SELF else "")
           + f"EXT{EXTENSIFICATION_VALUE}_")
 for iso, country_leakage in leakage.groupby("COUNTRY_OF_INTEREST"):
-    country_leakage.to_csv(RESULTS_DIR / f"{iso}_{prefix}leakage_per_kg.csv", index=False)
+    country_leakage.to_csv(RUN_DIR / f"{iso}_{prefix}leakage_per_kg.csv", index=False)
 for iso, country_leakage in leakage_per_m2.groupby("COUNTRY_OF_INTEREST"):
-    country_leakage.to_csv(RESULTS_DIR / f"{iso}_{prefix}leakage.csv", index=False)
-_leakage_funcs.summarise(leakage).to_csv(RESULTS_DIR / f"{prefix}leakage_summary_per_kg.csv", index=False)
+    country_leakage.to_csv(RUN_DIR / f"{iso}_{prefix}leakage.csv", index=False)
+_leakage_funcs.summarise(leakage).to_csv(RUN_DIR / f"{prefix}leakage_summary_per_kg.csv", index=False)
 
-print(f"Wrote leakage for {leakage['COUNTRY_OF_INTEREST'].nunique()} countries to {RESULTS_DIR}")
+inputs = [FLMP_RESULTS_DIR / str(YEAR) / ".mrio" / "TradeMatrix_import_dry_matter.csv", IMPACTS_PATH, FEED_MIX_PATH]
+inputs += [DATA_DIR / name for name in ["country_codes.csv", "commodity_crosswalk.csv", "beta_crops.csv",
+                                        "beta_animals.csv"]]
+record_path = _run_config.write_record(config, args.config, RUN_DIR, inputs)
+
+print(f"Wrote leakage for {leakage['COUNTRY_OF_INTEREST'].nunique()} countries to {RUN_DIR}, "
+      f"and the run's record to {record_path}")

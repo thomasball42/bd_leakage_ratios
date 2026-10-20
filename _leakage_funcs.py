@@ -165,7 +165,8 @@ def load_intensities(path: Path, codes: np.ndarray) -> tuple[dict[int, tuple[np.
     return intensities, {int(k): v for k, v in names.items()}
 
 
-def load_extensification(value: float | str, std: float, data_dir: Path, year: int, codes: np.ndarray,
+def load_extensification(value: float | str, std: float, clipping: tuple[float | None, float | None] | None,
+                         data_dir: Path, year: int, codes: np.ndarray,
                          items: list[int], intensities: dict[int, tuple[np.ndarray, np.ndarray]],
                          ) -> dict[int, tuple[np.ndarray, np.ndarray]]:
     """Each producer's extensification factor, its standard deviation, and its
@@ -182,10 +183,15 @@ def load_extensification(value: float | str, std: float, data_dir: Path, year: i
 
     value: a float, used with `std` for every producer and item, or "beta" for
         the per country x item betas (beta_{year} and se_{year}) in the same
-        files, `std` then unused. Negative betas are set to 0.
+        files, `std` then unused.
+    clipping: (lower, upper) bounds the betas are clipped to, either None for
+        no bound, or None for no clipping. A float `value` isn't clipped.
     """
     if isinstance(value, str) and value != "beta":
         raise ValueError(f"EXTENSIFICATION_VALUE must be a float or 'beta', not {value!r}")
+    lower, upper = (None, None) if clipping is None else clipping
+    if lower is not None and upper is not None and lower > upper:
+        raise ValueError(f"CLIPPING's lower bound is above its upper bound: {clipping}")
 
     year_cols = {f"beta_{year}", f"se_{year}"}
     crops = pd.read_csv(data_dir / "beta_crops.csv",
@@ -199,7 +205,7 @@ def load_extensification(value: float | str, std: float, data_dir: Path, year: i
     betas = pd.DataFrame({
         "area": betas["Area Code"],
         "item": betas["Item Code"],
-        "extensification": betas[f"beta_{year}"].clip(lower=0) if value == "beta" else float(value),
+        "extensification": betas[f"beta_{year}"].clip(lower, upper) if value == "beta" else float(value),
         "extensification_std": betas[f"se_{year}"] if value == "beta" else float(std),
         "current_production_kg": betas["current_production_t"] * 1000,
         "current_land_use_m2": betas["current_land_use_m2"],

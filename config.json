@@ -1,0 +1,22 @@
+{
+  "run": {
+    "run_name": "261019",
+    "year": 2021,
+    "countries": null
+  },
+  "paths": {
+    "flmp_results_dir": "/maps/tsb42/flmp/flmp_results/261019",
+    "results_dir": "/maps/tsb42/leakage_flows/bd_leakage_ratios_results",
+    "impacts_dir": null,
+    "data_dir": "data"
+  },
+  "replacement": {
+    "comprehensive": true,
+    "exclude_self": false
+  },
+  "extensification": {
+    "value": 0.0,
+    "std": 0.0,
+    "clipping": [0, null]
+  }
+}
