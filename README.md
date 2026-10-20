@@ -1,4 +1,5 @@
-Market leakage of displaced agricultural production: when a country produces less of an item, how much land, biodiversity and GHG impact moves to the countries that replace it.
+Calcultes market leakage of displaced agricultural production: when a country produces less of an item, how much land, biodiversity and GHG impact moves to the countries that replace it. Uses 'extensification factors' - elasticities between production and farmed area for each commodity, to estimate the extent to which foregone production motivates the clearing of new agricultural land (and consequently has high impacts in LIFE and carbon, etc) in the places that production is displaced to. 
+- Thomas S Ball, 20-10-2026
 
 ## Inputs
 
