@@ -1,6 +1,6 @@
 {
   "run": {
-    "run_name": "261019",
+    "run_name": "261019_run1",
     "year": 2021,
     "countries": null
   },
@@ -11,26 +11,29 @@
     "data_dir": "data"
   },
   "displacement": {
-    "unit": "kg",
-    "sizes": [1]
+    "unit": "share",
+    "sizes": [],
+    "sizes_dist": "geometric",
+    "sizes_n": 50,
+    "sizes_range": [1E-7, 0.30]
   },
   "replacement": {
     "comprehensive": true,
     "exclude_self": false
   },
   "extensification": {
-    "use_beta": false,
+    "use_beta": true,
     "value": 0.0,
     "std": 0.0,
-    "clipping": [0, null]
+    "clipping": [null, null]
   },
   "monte_carlo": {
     "draws": 1000,
-    "seed": 0,
+    "seed": 42,
     "percentiles": [5, 50, 95]
   },
   "outputs": {
-    "per_kg": false,
+    "per_kg": true,
     "per_m2": false
   }
 }

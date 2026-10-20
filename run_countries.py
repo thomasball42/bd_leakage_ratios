@@ -54,6 +54,16 @@ DATA_DIR = _run_config.resolve(config["paths"]["data_dir"])
 # kg displaced in each country of interest, or a share of its FLMP production of the item
 SIZE_UNIT: str = config["displacement"]["unit"]
 SIZES: list[float] = config["displacement"]["sizes"]
+
+if len(SIZES) == 0:
+    SIZES_DIST: str = config["displacement"]["sizes_dist"]
+    SIZES_N: int = config["displacement"]["sizes_n"]
+    if SIZES_DIST == "geometric":
+        SIZES = np.geomspace(config["displacement"]["sizes_range"][0], config["displacement"]["sizes_range"][1], SIZES_N).tolist()
+    elif SIZES_DIST == "arithmetic":
+        SIZES = np.linspace(config["displacement"]["sizes_range"][0], config["displacement"]["sizes_range"][1], SIZES_N).tolist()
+    SIZES = sorted(set(SIZES))
+
 COMPREHENSIVE: bool = config["replacement"]["comprehensive"]
 EXCLUDE_SELF: bool = config["replacement"]["exclude_self"]
 

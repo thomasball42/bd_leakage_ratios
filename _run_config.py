@@ -23,7 +23,7 @@ RECORD_KEY = "provenance"  # the section a run's record adds to its config
 SETTINGS = {
     "run": ["run_name", "year", "countries"],
     "paths": ["flmp_results_dir", "results_dir", "impacts_dir", "data_dir"],
-    "displacement": ["unit", "sizes"],
+    "displacement": ["unit", "sizes", "sizes_dist", "sizes_n", "sizes_range"],
     "replacement": ["comprehensive", "exclude_self"],
     "extensification": ["use_beta", "value", "std", "clipping"],
     "monte_carlo": ["draws", "seed", "percentiles"],
@@ -56,10 +56,8 @@ def load(path: Path) -> dict:
     unit, sizes = config["displacement"]["unit"], config["displacement"]["sizes"]
     if unit not in ("kg", "share"):
         problems.append(f"displacement.unit must be 'kg' or 'share', not {unit!r}")
-    if not isinstance(sizes, list) or not sizes or not all(number(s) and s > 0 for s in sizes):
-        problems.append(f"displacement.sizes must be a list of numbers above 0, not {sizes!r}")
-    elif unit == "share" and max(sizes) > 1:
-        problems.append(f"displacement.sizes are shares of production, so can't be above 1: {sizes}")
+    if not isinstance(sizes, list) or not all(number(s) and s > 0 for s in sizes):
+        problems.append(f"displacement.sizes must be a list of numbers above 0, or empty, not {sizes!r}")
     use_beta, value, std = (config["extensification"][key] for key in ["use_beta", "value", "std"])
     if not isinstance(use_beta, bool):
         problems.append(f"extensification.use_beta must be true or false, not {use_beta!r}")

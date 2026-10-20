@@ -23,7 +23,10 @@ For all countries and items, each displacement size takes about 6 minutes with 1
 | `paths.impacts_dir` | Where `prod_impacts_long` and `feed_mix_long` are read from, and built if missing. `null` for `{results_dir}/{run_name}/impacts_matrices`; point several runs on the same FLMP results at one folder to build them only once. |
 | `paths.data_dir` | The folder with the files in Inputs 3. |
 | `displacement.unit` | `"kg"`, or `"share"` for a share of each country of interest's FLMP production of the item. |
-| `displacement.sizes` | The displacement sizes to run, in that unit, e.g. `[1]` kg or `[0.001, 0.01, 0.1, 0.5]` of production (shares can't be above 1). Every size uses the same Monte Carlo draws. |
+| `displacement.sizes` | The displacement sizes to run, in that unit, e.g. `[1]` kg or `[0.001, 0.01, 0.1, 0.5]` of production. Or `[]` to generate them from `sizes_range`, `sizes_dist` and `sizes_n`. Every size uses the same Monte Carlo draws. |
+| `displacement.sizes_range` | When `sizes` is `[]`: `[lower, upper]` bounds of the generated sizes, both included, in that unit, e.g. `[0.001, 1]` of production or `[1, 100000000]` kg. |
+| `displacement.sizes_dist` | When `sizes` is `[]`: `"geometric"` (evenly spaced on a log scale) or `"arithmetic"` (evenly spaced) sizes between those bounds. |
+| `displacement.sizes_n` | When `sizes` is `[]`: the number of sizes to generate. |
 | `replacement.comprehensive` | See Options. |
 | `replacement.exclude_self` | See Options. |
 | `extensification.use_beta` | `true` to use the betas in `data/beta_*.csv` (`value` and `std` are then ignored), or `false` to use `value` and `std` in place of every beta and se there. See Options. |
