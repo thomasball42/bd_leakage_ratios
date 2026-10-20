@@ -18,7 +18,10 @@ consumed by country Y cost?", this answers "what does a kilogram of commodity X
 
 This is done for every impact in impacts_full.csv (arable and pasture area,
 extinctions, production GHG and carbon opportunity cost) and written to
-prod_impacts_long_<year>.csv plus one item matrix per impact.
+prod_impacts_long_<year>.csv plus one item matrix per impact. The feed itself, by
+crop and where it was grown, per kg of each animal product by producer, is written
+to feed_mix_long_<year>.csv. Everything goes to --out-dir; nothing is written to
+the FLMP results dir.
 """
 
 import argparse
@@ -50,6 +53,9 @@ SPLIT_COLS = [
     f"{col}_{part}{suffix}" for col in IMPACT_COLS for part in ("direct", "feed") for suffix in ("", "_err")
 ]
 VALUE_COLS = IMPACT_AND_ERR_COLS + SPLIT_COLS + ["production_tonnes", "feed_tonnes"]
+# feed mix entries at or below this (kg feed per kg animal product) are lstsq noise, dropped
+# (three quarters of the entries, 2e-8 of the feed for 2021)
+MIN_FEED_KG_PER_KG = 1e-9
 GROUPING = "group_name_v6"
 
 
@@ -83,7 +89,52 @@ def build_direct_long(results_dir: Path, year: int) -> tuple[pd.DataFrame, dict]
     return direct, item_names
 
 
-def feed_per_tonne_produced(results_dir: Path, year: int, direct: pd.DataFrame) -> pd.DataFrame:
+def read_mrio(results_dir: Path, year: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """FLMP's MRIO trade matrix, and the animal product rows of its feed matrix."""
+
+    mrio = results_dir / str(year) / ".mrio"
+    trade = pd.read_csv(mrio / "TradeMatrix_import_dry_matter.csv",
+                        usecols=["Consumer_Country_Code", "Producer_Country_Code", "Item_Code", "Value"])
+    feed = pd.read_csv(mrio / "TradeMatrixFeed_import_dry_matter.csv",
+                       usecols=["Producer_Country_Code", "Consumer_Country_Code", "Item_Code", "Value", "Animal_Product_Code"])
+    feed = feed[feed["Animal_Product_Code"].notna() & (feed["Value"] > 0)]
+    feed = feed.astype({"Producer_Country_Code": int, "Item_Code": int, "Animal_Product_Code": int})
+    return trade, feed
+
+
+def solve_per_producer(trade: pd.DataFrame, item: int, footprints: pd.DataFrame,
+                       warn: bool = True) -> tuple[np.ndarray, np.ndarray]:
+    """Solve R g = G for g_p, what each tonne of `item` produced in p embodies,
+    where G (`footprints`, indexed by consumer country code) is what each
+    consumer's consumption of the item embodies and R is the item's MRIO trade
+    matrix. Returns g (producers x columns of G) and the producers' codes."""
+
+    flows = trade[(trade["Item_Code"] == item) & (trade["Value"] > 0)]
+    codes = np.union1d(np.union1d(flows["Consumer_Country_Code"], flows["Producer_Country_Code"]),
+                       footprints.index).astype(int)
+    R = np.zeros((len(codes), len(codes)))
+    np.add.at(R, (np.searchsorted(codes, flows["Consumer_Country_Code"].astype(int)),
+                  np.searchsorted(codes, flows["Producer_Country_Code"].astype(int))), flows["Value"].to_numpy())
+    G = np.zeros((len(codes), footprints.shape[1]))
+    G[np.searchsorted(codes, footprints.index.astype(int))] = footprints.to_numpy()
+
+    producers = np.nonzero(R.sum(axis=0) > 0)[0]
+    Rp = R[:, producers]
+    g, _, rank, _ = np.linalg.lstsq(Rp, G, rcond=None)
+    if warn:
+        residual = np.linalg.norm(Rp @ g - G) / np.linalg.norm(G)
+        if residual > 1e-6:
+            print(f"Warning: item {int(item)}: feed footprints only fit to a relative residual of {residual:.1e}")
+        if rank < len(producers):
+            # producers whose feed can't be separated from another's (e.g. both sell only to the same consumer)
+            _, _, vt = np.linalg.svd(Rp)
+            unclear = codes[producers[np.abs(vt[rank:]).max(axis=0) > 1e-8]]
+            print(f"Warning: item {int(item)}: feed per tonne isn't uniquely determined for producers {unclear.tolist()}")
+    g[g < 0] = 0  # float noise around zero
+    return g, codes[producers]
+
+
+def feed_per_tonne_produced(trade: pd.DataFrame, feed: pd.DataFrame, direct: pd.DataFrame) -> pd.DataFrame:
     """Feed tonnes and feed impacts per tonne of each animal product, by the country
     that produced it.
 
@@ -96,14 +147,6 @@ def feed_per_tonne_produced(results_dir: Path, year: int, direct: pd.DataFrame) 
     the feed impacts per tonne of a produced in p. The same solve on the errors
     sums them linearly, as elsewhere.
     """
-
-    mrio = results_dir / str(year) / ".mrio"
-    trade = pd.read_csv(mrio / "TradeMatrix_import_dry_matter.csv",
-                        usecols=["Consumer_Country_Code", "Producer_Country_Code", "Item_Code", "Value"])
-    feed = pd.read_csv(mrio / "TradeMatrixFeed_import_dry_matter.csv",
-                       usecols=["Producer_Country_Code", "Consumer_Country_Code", "Item_Code", "Value", "Animal_Product_Code"])
-    feed = feed[feed["Animal_Product_Code"].notna() & (feed["Value"] > 0)]
-    feed = feed.astype({"Producer_Country_Code": int, "Item_Code": int, "Animal_Product_Code": int})
 
     # per-kg direct impacts of each crop where it was grown, falling back to the
     # crop's world average (and for the odd undefined, inf, error)
@@ -128,42 +171,44 @@ def feed_per_tonne_produced(results_dir: Path, year: int, direct: pd.DataFrame) 
 
     out = []
     for item, fp in footprints.groupby(level=0):
-        flows = trade[(trade["Item_Code"] == item) & (trade["Value"] > 0)]
-        codes = np.union1d(np.union1d(flows["Consumer_Country_Code"], flows["Producer_Country_Code"]),
-                           fp.index.get_level_values(1)).astype(int)
-        R = np.zeros((len(codes), len(codes)))
-        np.add.at(R, (np.searchsorted(codes, flows["Consumer_Country_Code"].astype(int)),
-                      np.searchsorted(codes, flows["Producer_Country_Code"].astype(int))), flows["Value"].to_numpy())
-        G = np.zeros((len(codes), len(rhs_cols)))
-        G[np.searchsorted(codes, fp.index.get_level_values(1).astype(int))] = fp.to_numpy()
-
-        producers = np.nonzero(R.sum(axis=0) > 0)[0]
-        Rp = R[:, producers]
-        g, _, rank, _ = np.linalg.lstsq(Rp, G, rcond=None)
-        residual = np.linalg.norm(Rp @ g - G) / np.linalg.norm(G)
-        if residual > 1e-6:
-            print(f"Warning: item {int(item)}: feed footprints only fit to a relative residual of {residual:.1e}")
-        if rank < len(producers):
-            # producers whose feed can't be separated from another's (e.g. both sell only to the same consumer)
-            _, _, vt = np.linalg.svd(Rp)
-            unclear = codes[producers[np.abs(vt[rank:]).max(axis=0) > 1e-8]]
-            print(f"Warning: item {int(item)}: feed per tonne isn't uniquely determined for producers {unclear.tolist()}")
-        g[g < 0] = 0  # float noise around zero
-
+        g, producers = solve_per_producer(trade, item, fp.droplevel(0))
         g = pd.DataFrame(g, columns=rhs_cols)
         g["ItemT_Code"] = int(item)
-        g["Effective_Producer_Code"] = codes[producers]
+        g["Effective_Producer_Code"] = producers
         out.append(g)
 
     return pd.concat(out, ignore_index=True)
 
 
-def build_prod_impacts_long(results_dir: Path, year: int) -> tuple[pd.DataFrame, dict]:
+def feed_mix_per_kg_produced(trade: pd.DataFrame, feed: pd.DataFrame) -> pd.DataFrame:
+    """Feed by crop and where it was grown, in kg per kg of each animal product, by
+    the country that produced it: the solve of feed_per_tonne_produced on the feed
+    tonnes of each crop x origin rather than on their impacts."""
+
+    out = []
+    for item, f in tqdm(feed.groupby("Animal_Product_Code"), desc="Solving feed mixes"):
+        footprints = f.pivot_table(index="Consumer_Country_Code", columns=["Item_Code", "Producer_Country_Code"],
+                                   values="Value", aggfunc="sum", fill_value=0)
+        # the same trade matrices as feed_per_tonne_produced, which warns about them
+        g, producers = solve_per_producer(trade, item, footprints, warn=False)
+        p, s = np.nonzero(g > MIN_FEED_KG_PER_KG)
+        out.append(pd.DataFrame({
+            "ItemT_Code": int(item),
+            "Effective_Producer_Code": producers[p],
+            "Feed_Item_Code": footprints.columns.get_level_values(0)[s],
+            "Feed_Origin_Code": footprints.columns.get_level_values(1)[s],
+            "feed_kg_per_kg": g[p, s],
+        }))
+    return pd.concat(out, ignore_index=True)
+
+
+def build_prod_impacts_long(results_dir: Path, year: int, trade: pd.DataFrame,
+                            feed: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Impacts and production tonnage by (item, producing country): the direct part,
     plus the feed part for animal products."""
 
     direct, item_names = build_direct_long(results_dir, year)
-    feed = feed_per_tonne_produced(results_dir, year, direct)
+    feed = feed_per_tonne_produced(trade, feed, direct)
 
     long_df = direct.rename(columns={"Item_Code": "ItemT_Code", "Producer_Country_Code": "Effective_Producer_Code",
                                      "provenance_tonnes": "production_tonnes"})
@@ -252,13 +297,15 @@ def add_per_kg_columns(long_df: pd.DataFrame) -> pd.DataFrame:
     return long_df
 
 
-def main(results_dir: Path = RESULTS_DIR, year: int = YEAR, input_data_dir: Path = INPUT_DATA_DIR) -> Path:
-    """Build every matrix and the prod_impacts_long table for one year into
-    <results_dir>/impacts_matrices, and return the prod_impacts_long path."""
+def main(results_dir: Path, year: int, input_data_dir: Path, out_dir: Path) -> Path:
+    """Build every matrix and the prod_impacts_long and feed_mix_long tables for
+    one year from the FLMP results_dir into out_dir, and return the
+    prod_impacts_long path."""
 
-    results_dir, input_data_dir = Path(results_dir), Path(input_data_dir)
+    results_dir, input_data_dir, out_dir = Path(results_dir), Path(input_data_dir), Path(out_dir)
 
-    long_df, item_names = build_prod_impacts_long(results_dir, year)
+    trade, feed = read_mrio(results_dir, year)
+    long_df, item_names = build_prod_impacts_long(results_dir, year, trade, feed)
     long_df = add_labels(long_df, item_names, input_data_dir)
 
     long_df["impact_per_kg"] = impact_per_kg(long_df["life_extinctions_per_sp_calc"], long_df["production_tonnes"])
@@ -270,8 +317,7 @@ def main(results_dir: Path = RESULTS_DIR, year: int = YEAR, input_data_dir: Path
     item_matrix, item_err_matrix = build_matrices(long_df, "ItemT_Name")
     group_matrix, group_err_matrix = build_matrices(long_df, GROUPING)
 
-    out_dir = results_dir / "impacts_matrices"
-    out_dir.mkdir(exist_ok=True)
+    out_dir.mkdir(exist_ok=True, parents=True)
     out_path = out_dir / f"prod_impacts_long_{year}.csv"
 
     item_matrix.to_csv(out_dir / f"bd_prod_extinctions_per_kg_item_{year}.csv")
@@ -321,6 +367,9 @@ def main(results_dir: Path = RESULTS_DIR, year: int = YEAR, input_data_dir: Path
 
     print(f"Wrote prod_impacts_long_{year}.csv and {2 * len(IMPACT_COLS)} per-impact item matrices to {out_dir}")
 
+    feed_mix_per_kg_produced(trade, feed).to_csv(out_dir / f"feed_mix_long_{year}.csv", index=False)
+    print(f"Wrote feed_mix_long_{year}.csv to {out_dir}")
+
     return out_path
 
 
@@ -329,6 +378,7 @@ if __name__ == "__main__":
     parser.add_argument("--year", type=int, default=YEAR)
     parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
     parser.add_argument("--input-data-dir", type=Path, default=INPUT_DATA_DIR)
+    parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    main(args.results_dir, args.year, args.input_data_dir)
+    main(args.results_dir, args.year, args.input_data_dir, args.out_dir)
