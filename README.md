@@ -90,7 +90,7 @@ Options:
 - `replacement.exclude_self: true`: C can't replace its own displaced production. C is dropped from each consumer's supply mix and the rest renormalised. Consumers that only bought from C turn to the world production mix.
 - With the default `replacement.exclude_self: false`, part of the replacement comes from C itself.
 - `extensification.use_beta`:
-  - `true` uses each country × item's `beta_{year}` and `se_{year}`. A producer with no beta of its own gets the item's World row.
+  - `true` uses each country × item's `beta_{year}` and `se_{year}`. A producer with no beta of its own gets the item's World row. So does one whose row is the filter's unfitted prior (β 0.5, se 1000, where it had no data), as any row with an se above `MAX_BETA_SE` (100) is treated as missing.
   - `false` replaces every beta in those files with `extensification.value`, and every se with `extensification.std`, so each country × item still gets its own draw.
   - Animal items (`PASTURE_ITEMS` in `_leakage_funcs.py`) take their country's "All pasture-based animal products" row of `beta_animals.csv`. Where they have no pasture (pigs, poultry, eggs), they have no pasture beta and extensify only through their feed.
 

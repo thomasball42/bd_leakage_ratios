@@ -49,6 +49,9 @@ WORLD_CODE = 5000  # FAOSTAT area code of the World rows in data/beta_*.csv
 PASTURE_ITEMS: set[int] = {867, 882, 947, 951, 977, 982, 1017, 1035, 1058, 1062, 1069, 1073, 1080, 1091, 1097,
                            1108, 1127, 1141, 1166}
 DRAW_BATCH_BYTES = 2e8  # memory for each batch of draws in evaluate_extensified
+# where the betas' filter had no data it leaves its prior (beta 0.5, se 1000): a beta row with an se above this is
+# treated as none, as drawing from it gives betas in the thousands (the largest fitted se is about 3)
+MAX_BETA_SE = 100
 
 
 def load_country_isos(data_dir: Path) -> dict[int, str]:
@@ -190,7 +193,8 @@ def load_extensification(use_beta: bool, value: float | None, std: float | None,
     The estimates are the rows of data/beta_crops.csv and data/beta_animals.csv
     for the countries in `codes` and the World, with beta_{year} and se_{year}
     for the FLMP `year` if `use_beta`, or otherwise `value` and `std` in place of
-    every row's. Returns each estimate's central beta and standard deviation,
+    every row's. Rows with an se above MAX_BETA_SE are left out, as unfitted.
+    Returns each estimate's central beta and standard deviation,
     as arrays with a NaN appended (so estimate -1, none, gives NaN), and per item
     each producer's estimate on the `codes` index and a mask of the producers
     that use the item's World row as they have none of their own.
@@ -215,9 +219,13 @@ def load_extensification(use_beta: bool, value: float | None, std: float | None,
         tables.append(table)
     betas = pd.concat(tables, ignore_index=True)
     betas = betas[betas["Area Code"].isin(codes) | (betas["Area Code"] == WORLD_CODE)].reset_index(drop=True)
+    unfitted = betas[se_col].to_numpy(float) > MAX_BETA_SE
+    if unfitted.any():
+        print(f"Treating {unfitted.sum()} beta rows with se_{year} above {MAX_BETA_SE} (the filter's unfitted prior) "
+              f"as none: (Area Code, Item Code) {list(zip(betas.loc[unfitted, 'Area Code'], betas.loc[unfitted, 'Item Code']))}")
     beta_hat = betas[beta_col].to_numpy(float) if use_beta else np.full(len(betas), float(value))
     beta_se = betas[se_col].to_numpy(float) if use_beta else np.full(len(betas), float(std))
-    usable = np.isfinite(beta_hat)
+    usable = np.isfinite(beta_hat) & ~unfitted
 
     pasture = VALUE_COLS.index("pasture_m2")
     estimates = {}
