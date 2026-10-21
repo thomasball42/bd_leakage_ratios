@@ -5,7 +5,8 @@ Created on Tue Aug 12 12:33:50 2025
 @author: Tom B
 
 Market leakage of displaced production for every country x item, with the settings
-in a config.json (see the README): `python run_countries.py [config.json]`. Inputs:
+in a config.json (see the README): `python run_countries.py [config.json] [--workers N]`,
+with N processes running the items in parallel (the results are the same). Inputs:
     FLMP_RESULTS_DIR  a FLMP results dir, for {year}/.mrio/TradeMatrix_import_dry_matter.csv
                       (only read from)
     IMPACTS_PATH      per-kg production impacts and production, and
@@ -21,7 +22,29 @@ from which it can be rerun.
 """
 
 import argparse
+import contextlib
+import multiprocessing
+import os
+import signal
 from pathlib import Path
+
+import _run_config
+
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument("config", nargs="?", type=Path, default=_run_config.REPO_DIR / "config.json",
+                    help="a config.json, or a run's record of one (default: the repository's config.json)")
+parser.add_argument("--workers", type=int, default=1,
+                    help="processes to compute the items and write the results in at once (default: 1); see the "
+                         "README's Running in parallel")
+args = parser.parse_args()
+if args.workers < 1:
+    parser.error(f"--workers must be at least 1, not {args.workers}")
+WORKERS: int = args.workers
+if WORKERS > 1:
+    # one BLAS thread per worker, as numpy's OpenBLAS otherwise starts up to 64 in each; this must be set before
+    # numpy is imported, and the workers inherit it
+    for var in ["OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"]:
+        os.environ.setdefault(var, "1")
 
 import numpy as np
 import pandas as pd
@@ -29,12 +52,7 @@ from tqdm import tqdm
 
 import _build_bd_prod_impacts_matrix
 import _leakage_funcs
-import _run_config
 
-parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("config", nargs="?", type=Path, default=_run_config.REPO_DIR / "config.json",
-                    help="a config.json, or a run's record of one (default: the repository's config.json)")
-args = parser.parse_args()
 config = _run_config.load(args.config)
 
 ### Configuration variables, from the config (relative paths from the repository folder) ###
@@ -141,53 +159,74 @@ def label(table: pd.DataFrame, item_code: int, size: float) -> pd.DataFrame:
     return pd.concat([out, rest.reset_index(drop=True)], axis=1)
 
 
-written = set()
+written = set()  # the files this run has written, which later sizes append to
 
 
-def write(table: pd.DataFrame, path: Path) -> None:
-    """Write `table` to `path`, replacing any earlier file the first time this run
-    writes it and appending after that."""
-    table.to_csv(path, mode="a" if path in written else "w", header=path not in written, index=False)
-    written.add(path)
+def write_csv(task: tuple[pd.DataFrame, Path, bool]) -> None:
+    """Write `table` to `path` for task (table, path, append): appending to it, or
+    replacing any earlier file. Runs in the workers."""
+    table, path, append = task
+    table.to_csv(path, mode="a" if append else "w", header=not append, index=False)
 
 
-for size in SIZES:
-    mains, per_kgs, summaries = [], [], []
-    for item_code in tqdm(items, desc=f"Displacing {size} {SIZE_UNIT}"):
-        R = matrices[item_code]
-        producing_idx = coi_idx[R[:, coi_idx].sum(axis=0) > 0]
-        if len(producing_idx) == 0:
-            continue
-        L = _leakage_funcs.replacement_shares(R, comprehensive=COMPREHENSIVE, exclude_self=EXCLUDE_SELF)
-        intensity, fallback = intensities[item_code]
-        sources = _leakage_funcs.land_sources(item_code, intensities, production, pasture_based, estimates, feed_mix)
-        displaced_kg = (np.full(len(producing_idx), float(size)) if SIZE_UNIT == "kg"
-                        else size * production[item_code][producing_idx])
-        main, per_kg, summary = _leakage_funcs.leakage_for_item(
-            L, intensity, fallback, producing_idx, sources, displaced_kg, estimates[item_code], betas, PERCENTILES,
-            production[item_code], pasture_based if item_code in _leakage_funcs.PASTURE_ITEMS else None)
-        mains.append(label(main, item_code, size))
-        summaries.append(label(summary, item_code, size))
+def item_leakage(task: tuple[float, int]) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame] | None:
+    """The labelled main, per-kg (None if no output needs it) and summary tables
+    of displacing `size` of the item in each country of interest that produces
+    it, for task (size, item_code), or None if none does. Runs in the workers."""
+    size, item_code = task
+    R = matrices[item_code]
+    producing_idx = coi_idx[R[:, coi_idx].sum(axis=0) > 0]
+    if len(producing_idx) == 0:
+        return None
+    L = _leakage_funcs.replacement_shares(R, comprehensive=COMPREHENSIVE, exclude_self=EXCLUDE_SELF)
+    intensity, fallback = intensities[item_code]
+    sources = _leakage_funcs.land_sources(item_code, intensities, production, pasture_based, estimates, feed_mix)
+    displaced_kg = (np.full(len(producing_idx), float(size)) if SIZE_UNIT == "kg"
+                    else size * production[item_code][producing_idx])
+    main, per_kg, summary = _leakage_funcs.leakage_for_item(
+        L, intensity, fallback, producing_idx, sources, displaced_kg, estimates[item_code], betas, PERCENTILES,
+        production[item_code], pasture_based if item_code in _leakage_funcs.PASTURE_ITEMS else None)
+    return (label(main, item_code, size), label(per_kg, item_code, size) if PER_KG or PER_M2 else None,
+            label(summary, item_code, size))
+
+
+# the workers are forked, so they share everything loaded above; they ignore Ctrl-C, which stops the run from here
+with (multiprocessing.get_context("fork").Pool(WORKERS, initializer=signal.signal,
+                                               initargs=(signal.SIGINT, signal.SIG_IGN))
+      if WORKERS > 1 else contextlib.nullcontext()) as pool:
+    # imap keeps the items in order, so the files are the same as a serial run's; with one worker, the builtin map
+    # runs everything here instead
+    imap = map if pool is None else pool.imap
+    results = imap(item_leakage, [(SIZES[0], item_code) for item_code in items])
+    for i, size in enumerate(SIZES):
+        current = results
+        if i + 1 < len(SIZES):  # queue the next size behind this one, so the workers go straight on to it
+            results = imap(item_leakage, [(SIZES[i + 1], item_code) for item_code in items])
+        item_tables = [t for t in tqdm(current, total=len(items), desc=f"Displacing {size} {SIZE_UNIT}")
+                       if t is not None]
+        mains, per_kgs, summaries = zip(*item_tables)
+
+        main = pd.concat(mains, ignore_index=True)
+        summary = pd.concat(summaries, ignore_index=True)
+        unextensified = summary["land_use_m2_spared"].isna() & ~summary["ItemT_Code"].isin(no_betas)
+        if unextensified.any():
+            print(f"No extensified results for {unextensified.sum()} country x items displacing {size} {SIZE_UNIT}, "
+                  f"where a land source would lose more than it produces, or with no data for any of their land")
+        files = {RUN_DIR / f"{iso}_leakage.csv": country for iso, country in main.groupby("COUNTRY_OF_INTEREST")}
+        files[RUN_DIR / "leakage_summary.csv"] = summary
         if PER_KG or PER_M2:
-            per_kgs.append(label(per_kg, item_code, size))
-
-    main = pd.concat(mains, ignore_index=True)
-    summary = pd.concat(summaries, ignore_index=True)
-    unextensified = summary["land_use_m2_spared"].isna() & ~summary["ItemT_Code"].isin(no_betas)
-    if unextensified.any():
-        print(f"No extensified results for {unextensified.sum()} country x items displacing {size} {SIZE_UNIT}, where "
-              f"a land source would lose more than it produces, or with no data for any of their land")
-    for iso, country in main.groupby("COUNTRY_OF_INTEREST"):
-        write(country, RUN_DIR / f"{iso}_leakage.csv")
-    write(summary, RUN_DIR / "leakage_summary.csv")
-    if per_kgs:
-        per_kg = pd.concat(per_kgs, ignore_index=True)
-        if PER_KG:
-            for iso, country in per_kg.groupby("COUNTRY_OF_INTEREST"):
-                write(country, RUN_DIR / f"{iso}_leakage_per_kg.csv")
-        if PER_M2:
-            for iso, country in _leakage_funcs.per_m2_of_spared_land(per_kg).groupby("COUNTRY_OF_INTEREST"):
-                write(country, RUN_DIR / f"{iso}_leakage_per_m2.csv")
+            per_kg = pd.concat(per_kgs, ignore_index=True)
+            if PER_KG:
+                files.update({RUN_DIR / f"{iso}_leakage_per_kg.csv": country
+                              for iso, country in per_kg.groupby("COUNTRY_OF_INTEREST")})
+            if PER_M2:
+                per_m2 = _leakage_funcs.per_m2_of_spared_land(per_kg)
+                files.update({RUN_DIR / f"{iso}_leakage_per_m2.csv": country
+                              for iso, country in per_m2.groupby("COUNTRY_OF_INTEREST")})
+        # each file gets one table a size, so the workers can write them all at once; waiting for them keeps each
+        # file's sizes in order
+        list(imap(write_csv, [(table, path, path in written) for path, table in files.items()]))
+        written.update(files)
 
 inputs = [FLMP_RESULTS_DIR / str(YEAR) / ".mrio" / "TradeMatrix_import_dry_matter.csv", IMPACTS_PATH, FEED_MIX_PATH]
 inputs += [DATA_DIR / name for name in ["country_codes.csv", "commodity_crosswalk.csv", "beta_crops.csv",

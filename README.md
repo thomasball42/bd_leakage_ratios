@@ -7,9 +7,17 @@ Calcultes market leakage of displaced agricultural production: when a country pr
 2. `prod_impacts_long_{year}.csv` and `feed_mix_long_{year}.csv` in `paths.impacts_dir`: per-kg production impacts and production by producing country and item, and the feed by crop and origin per kg of each animal product by producing country. If either is missing, `run_countries.py` builds them first with `_build_bd_prod_impacts_matrix.py`. To build them on their own, run `python _build_bd_prod_impacts_matrix.py --year {year} --results-dir {flmp_results_dir} --out-dir {impacts_dir}`.
 3. `data/`: `country_codes.csv` and `commodity_crosswalk.csv`, already in this repo, and `beta_crops.csv` and `beta_animals.csv`, downloaded by `python _get_extensification_data.py`. Only their `beta_{year}` and `se_{year}` columns are used, for the FLMP year.
 
-Then run `python run_countries.py`, which uses the repository's `config.json`, or `python run_countries.py path/to/config.json`.
+Then run `python run_countries.py`, which uses the repository's `config.json`, or `python run_countries.py path/to/config.json`. Add `--workers N` to run the items in N processes at once (see Running in parallel).
 
 For all countries and items, each displacement size takes about 6 minutes with 1,000 Monte Carlo draws, or about 1.5 minutes with 100. Building the impacts matrices takes another minute and a half the first time. Peak memory is about 2 GB at 1,000 draws, and each size writes about 0.5 GB of results.
+
+## Running in parallel
+
+`python run_countries.py --workers N` computes the items in N processes at once, and writes the results files in them too. They use the same Monte Carlo draws, and each size's files are all written, in the same order, before the next size's, so the results are the same as a serial run's. (The Monte Carlo columns can differ in float32 rounding, by up to about 1e-5 of the spared and leaked amounts, as a serial run's matrix products use several BLAS threads and each worker's one; with `OPENBLAS_NUM_THREADS=1` the serial run's files are byte-for-byte the same.) As the number of workers doesn't change the results, it isn't a setting in `config.json`, but the record's `command` shows it.
+
+With all countries and 1,000 draws, a size takes about 36 seconds with 16 workers, or 27 with 32, against about 6 minutes serially, so 50 sizes take 20-30 minutes rather than 5 hours. More than about 32 workers won't help, as the slowest items (animal products, through their feed, at about 50 seconds each) then set the pace. 32 workers need about 23 GB of memory in all.
+
+The workers are forked, which needs Linux or macOS, and use one BLAS thread each unless `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS` or `MKL_NUM_THREADS` is already set.
 
 ## Configuration (`config.json`)
 
