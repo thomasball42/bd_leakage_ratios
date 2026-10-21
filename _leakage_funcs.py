@@ -16,7 +16,8 @@ impacts that follow it (LAND_DRIVEN), of each change are extensified: the change
 at each land source - a crop's own land, an animal product's pasture, and each of
 its feed crops where grown - goes through leakage_land_use with that source's
 FLMP production and land and its beta, after netting the changes at each source
-within C's scenario. The betas' uncertainty is carried by Monte Carlo: each draw
+within C's scenario. The results are located where each source is, so feed land
+counts where the feed is grown, not where the animal product is. The betas' uncertainty is carried by Monte Carlo: each draw
 takes every beta estimate from Normal(beta, se) (see draw_betas).
 """
 from pathlib import Path
@@ -302,8 +303,9 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
 
     One row per producer x source, with producer_idx, the source (source_item and
     source_idx, the country it's in), its beta `estimate`, its kg per kg of item
-    (kg_per_kg), its FLMP production (production_kg) and land (land_use_m2), and
-    the SCALED impacts per kg of item that come from it. A crop source's land is
+    (kg_per_kg), its FLMP production (production_kg), land (land_use_m2) and land
+    per kg of its own output (land_m2_per_kg), and the SCALED impacts per kg of
+    item that come from it. A crop source's land is
     its FLMP arable land per kg times its production. An animal product's pasture
     is on the scale of its producer's pasture-based production (`pasture_based`),
     so its land is its own pasture per kg times that. Feed is priced with each
@@ -326,6 +328,7 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
         "kg_per_kg": 1.0,
         "production_kg": own_production,
         "land_use_m2": own_land_per_kg * own_production,
+        "land_m2_per_kg": own_land_per_kg,
     })
     own[SCALED] = intensity[:, scaled]
     if item not in feed_mix:
@@ -338,9 +341,9 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
         crop_production = production[feed_item][origin] if feed_item in production else np.full(len(g), np.nan)
         if feed_item in intensities:
             per_kg = intensities[feed_item][0][origin]
-            land, impacts = per_kg[:, arable] * crop_production, kg[:, None] * per_kg[:, scaled]
+            land_per_kg, impacts = per_kg[:, arable], kg[:, None] * per_kg[:, scaled]
         else:  # unpriced in prod_impacts_long too
-            land, impacts = np.full(len(g), np.nan), np.zeros((len(g), len(scaled)))
+            land_per_kg, impacts = np.full(len(g), np.nan), np.zeros((len(g), len(scaled)))
         source = pd.DataFrame({
             "producer_idx": g["producer_idx"].to_numpy(),
             "source_item": feed_item,
@@ -348,7 +351,8 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
             "estimate": estimates[feed_item][0][origin],
             "kg_per_kg": kg,
             "production_kg": crop_production,
-            "land_use_m2": land,
+            "land_use_m2": land_per_kg * crop_production,
+            "land_m2_per_kg": land_per_kg,
         })
         source[SCALED] = impacts
         feed_sources.append(source)
@@ -375,49 +379,65 @@ def leakage_land_use(beta: np.ndarray, current_production: np.ndarray, current_l
 
 
 def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer: np.ndarray, kg: np.ndarray,
-                        beta_central: np.ndarray) -> dict:
-    """The parts of extensifying each row's change that don't depend on the betas,
-    for evaluate_extensified: `kg` more (or, if negative, less) of the item from
-    the producer at `row_producer`, in the scenario of the country of interest at
-    `row_coi`, given the item's land_sources.
+                        row_replacement: np.ndarray, beta_central: np.ndarray) -> dict:
+    """The parts of extensifying each scenario's changes that don't depend on the
+    betas, for evaluate_extensified, given the item's land_sources and its rows:
+    `kg` more (or, if negative, less) of the item from the producer at
+    `row_producer`, in the scenario of the country of interest at `row_coi`, as
+    a replacement (`row_replacement`) or displaced row.
 
     Within a scenario, the changes at each land source (a producer's own land, or
     a feed crop where it was grown) are netted first - C's loss against what it
     replaces itself, and feed origins shared between producers - and the net
     change goes through leakage_land_use once, as A * expm1(beta * log1p(net / Q))
-    with the source's FLMP production Q and land A. Each row then gets the
-    source's land use per kg of that net change times its own kg there, and its
-    SCALED impacts times the source's extensified over linear land change for the
-    net change. A source with no land (an animal product's pasture, where it has
-    none) changes nothing. Sources with no beta (`beta_central`, over the
-    estimates, is NaN) or no FLMP production are left out, and a row with none at
-    all is NaN, as is every row of a scenario in which a source would lose more
-    than it produces.
-    """
-    key = sources["source_item"].to_numpy(np.int64) * 1_000_000 + sources["source_idx"].to_numpy(np.int64)
-    keys, first, source_id = np.unique(key, return_index=True, return_inverse=True)
-    estimate, production, land_use = (sources[col].to_numpy()[first]
-                                      for col in ["estimate", "production_kg", "land_use_m2"])
+    with the source's FLMP production Q and land A. Each row's kg at the source
+    then gets the source's land use per kg of that net change, and its SCALED
+    impacts times the source's extensified over linear land change for the net
+    change. The results are summed by flow (displaced or replacement) and by where
+    each source is, its location: a crop's land is where it's grown, an animal
+    product's pasture where the animal is, and its feed where the feed was grown.
+    A source with no land (an animal product's pasture, where it has none)
+    changes nothing. Sources with no beta (`beta_central`, over the estimates, is
+    NaN) or no FLMP production are left out. A flow is NaN in a scenario in which
+    a source would lose more than it produces; so is the displaced flow where C's
+    own sources are all left out, and the replacement flow where every replacing
+    producer's are.
 
-    # each source's land per kg (m2) and SCALED impacts, per kg of item from each producer
+    Returns the scenarios (their row_coi); the rows to report, one per scenario x
+    flow x location where the flow has impacts or production, sorted by scenario,
+    flow (displaced, replacement) then location: their scenario (row_s, its
+    position in scenarios), flow (row_f, 1 for replacement) and location (row_loc,
+    on the codes index), production change (production_kg), linear changes
+    (`linear`, at beta 1: land, then SCALED, then pasture land) and whether they're
+    NaN (row_nan); and the NaN flows (flow_nan, flows x scenarios). The rest is for
+    evaluate_extensified: the entries, each scenario x flow x source that changes,
+    by row, with what's needed to extensify them.
+    """
+    # each source once
+    key = sources["source_idx"].to_numpy(np.int64) * 1_000_000 + sources["source_item"].to_numpy(np.int64)
+    keys, first, source_id = np.unique(key, return_index=True, return_inverse=True)
+    estimate, production, land_use, location, source_item = (
+        sources[col].to_numpy()[first] for col in ["estimate", "production_kg", "land_use_m2", "source_idx",
+                                                   "source_item"])
+    pasture = np.isin(source_item, list(PASTURE_ITEMS))  # an animal product's own source is its pasture
+
+    # each source's kg, land (m2) and SCALED impacts, per kg of item from each producer
     producer = sources["producer_idx"].to_numpy()
     n_codes = producer.max() + 1
     per_kg = np.zeros((n_codes, len(keys)))
     np.add.at(per_kg, (producer, source_id), sources["kg_per_kg"].to_numpy())
-    weights = np.zeros((len(keys), 1 + len(SCALED), n_codes))
-    with np.errstate(divide="ignore", invalid="ignore"):
-        weights[:, 0] = (per_kg * (land_use / production)).T
+    weights = np.zeros((1 + len(SCALED), n_codes, len(keys)))
+    np.add.at(weights[0], (producer, source_id), (sources["kg_per_kg"] * sources["land_m2_per_kg"]).to_numpy())
     for j, col in enumerate(SCALED):
-        impacts = np.zeros((n_codes, len(keys)))
-        np.add.at(impacts, (producer, source_id), sources[col].to_numpy())
-        weights[:, 1 + j] = impacts.T
-    weights = np.nan_to_num(weights, nan=0, posinf=0, neginf=0).reshape(len(keys), -1)
+        np.add.at(weights[1 + j], (producer, source_id), sources[col].to_numpy())
+    weights = np.nan_to_num(weights, nan=0, posinf=0, neginf=0)
 
-    # the net change at each source, by scenario
+    # each flow's kg of item from each producer, and the net change at each source, by scenario
     scenarios, scenario = np.unique(row_coi, return_inverse=True)
-    item_kg = np.zeros((len(scenarios), n_codes))
-    np.add.at(item_kg, (scenario, row_producer), kg)
-    net = item_kg @ per_kg
+    flow = row_replacement.astype(int)
+    item_kg = np.zeros((2, len(scenarios), n_codes))  # displaced, replacement
+    np.add.at(item_kg, (flow, scenario, row_producer), kg)
+    net = item_kg.sum(axis=0) @ per_kg
     with np.errstate(divide="ignore", invalid="ignore"):
         log_growth = np.log1p(net / production)
         production_over_net = production / net
@@ -428,43 +448,84 @@ def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer
     known = usable & (np.isfinite(log_growth) | marginal | (log_growth == -np.inf))
     impossible = ((net < -production) & ~no_land).any(axis=1)
 
-    at = (scenario, row_producer)
-    covered = ((known | no_land).astype(np.float32) @ (per_kg > 0).T.astype(np.float32))[at] > 0
-    draw_columns = len(EXTENSIFIED) * n_codes
+    # a row is covered if any of its producer's sources is known (or has no land)
+    covered = (((known | no_land).astype(np.float32) @ (per_kg > 0).T.astype(np.float32)) > 0)[scenario, row_producer]
+    flow_covered = np.zeros((2, len(scenarios)), bool)
+    np.logical_or.at(flow_covered, (flow, scenario), covered)
+    flow_nan = ~flow_covered | impossible
+
+    # each flow's linear change at each source (flows x columns x scenarios x sources): its rows' kg times their
+    # producers' weights, which the extensified change scales by the source's extensified over linear change
+    changes = item_kg[:, None] @ weights[None]
+
+    # the rows, keyed by scenario, flow and location: wherever a flow changes a source, or production
+    n_scenarios = len(scenarios)
+    entry_f, entry_s, entry_source = np.nonzero((changes != 0).any(axis=1))
+    entry_key = (entry_s * 2 + entry_f) * n_codes + location[entry_source]
+    production_f, production_s, production_loc = np.nonzero(item_kg)
+    row_keys = np.union1d(entry_key, (production_s * 2 + production_f) * n_codes + production_loc)
+    row_s, row_f, row_loc = row_keys // (2 * n_codes), row_keys // n_codes % 2, row_keys % n_codes
+
+    # the entries, by row, and where each row's start (for the rows that have any)
+    order = np.argsort(entry_key, kind="stable")
+    entry_f, entry_s, entry_source, entry_key = entry_f[order], entry_s[order], entry_source[order], entry_key[order]
+    segment_keys, segment_starts = np.unique(entry_key, return_index=True)
+    entry_changes = changes[entry_f, :, entry_s, entry_source]  # entries x columns
+    linear = np.zeros((len(row_keys), 2 + len(SCALED)))
+    linear[np.searchsorted(row_keys, segment_keys)] = np.add.reduceat(
+        np.column_stack([entry_changes, entry_changes[:, 0] * pasture[entry_source]]), segment_starts, axis=0)
+    at = (entry_s, entry_source)
     return {
-        "estimate": estimate, "n_codes": n_codes, "n_scenarios": len(scenarios), "scenario": scenario,
-        "row_producer": row_producer, "kg": kg, "log_growth": log_growth, "production_over_net": production_over_net,
-        "marginal": marginal, "contributes": known & ~no_land, "row_nan": ~covered | impossible[scenario],
-        "weights": weights, "weights32": weights[:, :draw_columns].astype(np.float32),
-        "log_growth32": log_growth.astype(np.float32), "production_over_net32": production_over_net.astype(np.float32),
+        "scenarios": scenarios, "flow_nan": flow_nan,
+        "row_s": row_s, "row_f": row_f, "row_loc": row_loc, "row_nan": flow_nan[row_f, row_s],
+        "production_kg": item_kg[row_f, row_s, row_loc], "linear": linear,
+        "segment_rows": np.searchsorted(row_keys, segment_keys), "segment_starts": segment_starts,
+        "no_entries": ~np.isin(row_keys, segment_keys),
+        "estimate": estimate[entry_source], "marginal": marginal[at], "contributes": (known & ~no_land)[at],
+        "changes": entry_changes, "changes32": entry_changes[:, :len(EXTENSIFIED)].astype(np.float32),
+        "log_growth": log_growth[at], "production_over_net": production_over_net[at],
+        "log_growth32": log_growth[at].astype(np.float32),
+        "production_over_net32": production_over_net[at].astype(np.float32),
     }
 
 
 def evaluate_extensified(prepared: dict, betas: np.ndarray, errors: bool = False) -> np.ndarray:
     """Each row's extensified land use (m2) and LAND_DRIVEN impacts - and with
     `errors` their FLMP errors, in SCALED order after them - for each set of betas
-    in `betas` (sets x estimates, or one set), from prepare_extensified. Returns
-    a (sets x rows x columns) array, in float64 with `errors` (the central
-    values) and float32 without (the draws)."""
+    in `betas` (estimates x sets, or one set), from prepare_extensified: the sum of
+    its entries' linear changes, each scaled by its source's extensified over
+    linear change. Returns a (columns x rows x sets) array, in float64 with
+    `errors` (the central values) and float32 without (the draws), NaN for the
+    rows prepare_extensified marks NaN."""
     p = prepared
-    betas = np.atleast_2d(betas)
+    betas = betas[:, None] if betas.ndim == 1 else betas
     if errors:
-        weights, log_growth, production_over_net, dtype = (p["weights"], p["log_growth"], p["production_over_net"],
+        changes, log_growth, production_over_net, dtype = (p["changes"], p["log_growth"], p["production_over_net"],
                                                            np.float64)
     else:
-        weights, log_growth, production_over_net, dtype = (p["weights32"], p["log_growth32"],
+        changes, log_growth, production_over_net, dtype = (p["changes32"], p["log_growth32"],
                                                            p["production_over_net32"], np.float32)
-    beta = betas[:, p["estimate"]].astype(dtype)[:, None, :]
+    # entries x sets, so each row's entries are summed over contiguous memory; in place where it can be, as new
+    # memory (fresh pages) can be many times slower to write to than reused memory
+    beta = betas[p["estimate"]].astype(dtype, copy=False)
+    ratio = beta * log_growth[:, None]
     with np.errstate(invalid="ignore", over="ignore"):
-        ratio = np.expm1(beta * log_growth) * production_over_net
-    ratio = np.where(p["marginal"], beta, ratio)
-    ratio = np.where(p["contributes"], ratio, 0).astype(dtype)
+        np.expm1(ratio, out=ratio)
+        ratio *= production_over_net[:, None]
+    np.copyto(ratio, beta, where=p["marginal"][:, None])
+    ratio[~p["contributes"]] = 0
+    del beta
 
-    out = ratio.reshape(-1, ratio.shape[-1]) @ weights
-    out = out.reshape(len(betas), p["n_scenarios"], -1, p["n_codes"]).transpose(0, 2, 1, 3)
-    out = out[:, :, p["scenario"], p["row_producer"]] * p["kg"].astype(dtype)
-    out[:, :, p["row_nan"]] = np.nan
-    return out.transpose(0, 2, 1)
+    # each column's rows x sets is contiguous, which keeps writing the rows fast
+    out = np.empty((changes.shape[1], len(p["row_s"]), betas.shape[1]), dtype)
+    out[:, p["no_entries"]] = 0
+    if len(p["segment_starts"]):
+        product = np.empty_like(ratio)
+        for j in range(changes.shape[1]):
+            np.multiply(ratio, changes[:, j, None], out=product)
+            out[j][p["segment_rows"]] = np.add.reduceat(product, p["segment_starts"], axis=0)
+    out[:, p["row_nan"]] = np.nan
+    return out
 
 
 def replacement_rows(L: np.ndarray, coi_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -502,86 +563,111 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
     and its FLMP `production` (kg) and, for animal products, each producer's
     `pasture_based` production, all on the codes index.
 
-    Returns three tables, each with coi_idx (and the first two producer_idx):
-    - main: one 'replacement' row per producer p with L[C, p] > 0, for the kg it
-      replaces, and one 'displaced' row for C's loss: the extensified land use
-      and LAND_DRIVEN impacts (central, plus percentiles and sd over the draws),
-      their FLMP errors, production GHG (linear), the producer's extensification
-      factor (its pasture's, for an animal product), and its current FLMP
-      production and land for the item;
-    - per_kg: the same rows per kg displaced, with the linear impacts (the per-kg
-      output);
+    Returns three tables, each with coi_idx (and the first two location_idx):
+    - main: for each country of interest C, one 'displaced' row for each location
+      where C's lost production had its land (C itself, and for an animal product
+      the origins of its feed), and one 'replacement' row for each location where
+      the replacing production has its land or is produced, with: the location's
+      production change of the item, as a producer (L[C, location] * kg
+      displaced, or minus it in C's displaced row, 0 where it only grows feed);
+      the extensified land use and LAND_DRIVEN impacts located there (central,
+      plus percentiles and sd over the draws) and their FLMP errors; production
+      GHG of its production change (linear); and its extensification factor (its
+      pasture's, for an animal product) and current FLMP production and land for
+      the item;
+    - per_kg: the same rows per kg displaced, with the linear impacts located
+      there (the per-kg output);
     - summary: per country of interest, for each EXTENSIFIED result, the amount
-      spared at home, leaked elsewhere, the net leakage (leaked - spared) and
-      their ratio, each central plus percentiles and sd, and production GHG
-      spared and leaked, with each producer's current state.
+      spared (minus its displaced rows' sum), leaked (its replacement rows' sum),
+      the net leakage (leaked - spared) and their ratio, each central plus
+      percentiles and sd, and production GHG spared and leaked, with its current
+      state.
     """
     scenario, producer, share, replacement = replacement_rows(L, coi_idx)
-    m = displaced_kg[scenario]
-    kg = share * m
-    prepared = prepare_extensified(sources, coi_idx[scenario], producer, kg, betas["central"])
-    central = evaluate_extensified(prepared, betas["central"], errors=True)[0]
-    draws = None
+    kg = share * displaced_kg[scenario]
+    prepared = p = prepare_extensified(sources, coi_idx[scenario], producer, kg, replacement, betas["central"])
+    central = evaluate_extensified(prepared, betas["central"], errors=True)[..., 0]  # columns x rows
+    draws = None  # columns x rows x draws
     if betas["draws"] is not None:
         batch = max(1, int(DRAW_BATCH_BYTES // (4 * prepared["log_growth"].size)))
-        draws = np.concatenate([evaluate_extensified(prepared, betas["draws"][i:i + batch])
-                                for i in range(0, len(betas["draws"]), batch)])
+        draws_t = np.ascontiguousarray(betas["draws"].T, dtype=np.float32)  # estimates x draws
+        draws = np.concatenate([evaluate_extensified(prepared, draws_t[:, i:i + batch])
+                                for i in range(0, draws_t.shape[1], batch)], axis=-1)
+
+    # the rows: each scenario's displaced locations, then its replacement ones
+    row_s, row_f, location = p["row_s"], p["row_f"], p["row_loc"]
+    scenario_kg = np.zeros(len(p["scenarios"]))
+    scenario_kg[np.searchsorted(p["scenarios"], coi_idx)] = displaced_kg
+    m = scenario_kg[row_s]
+    production_change = p["production_kg"]
 
     col = VALUE_COLS.index
     estimate, ext_fallback = estimates
-    current_production = production[producer]
+    current_production = production[location]
     main = pd.DataFrame({
-        "coi_idx": coi_idx[scenario],
-        "producer_idx": producer,
-        "flow": np.where(replacement, "replacement", "displaced"),
+        "coi_idx": p["scenarios"][row_s],
+        "location_idx": location,
+        "flow": np.where(row_f == 1, "replacement", "displaced"),
         "displaced_kg": m,
-        "production_change_kg": kg,
+        "production_change_kg": production_change,
     })
     for j, name in enumerate(EXTENSIFIED):
-        _add_spread(main, name, central[:, j], None if draws is None else draws[:, :, j], percentiles)
+        _add_spread(main, name, central[j], None if draws is None else draws[j].T, percentiles)
         if name in LAND_DRIVEN:
-            main[f"{name}_err"] = np.abs(central[:, len(EXTENSIFIED) + LAND_DRIVEN.index(name)])
-    main["ghg_prod_kgco2e"] = kg * intensity[producer, col("ghg_prod_kgco2e")]
-    main["ghg_prod_kgco2e_err"] = np.abs(kg) * intensity[producer, col("ghg_prod_kgco2e_err")]
-    main["extensification"] = betas["central"][estimate[producer]]
-    main["extensification_std"] = betas["se"][estimate[producer]]
-    main["fallback_intensity"] = fallback[producer]
-    main["fallback_extensification"] = ext_fallback[producer]
+            main[f"{name}_err"] = np.abs(central[len(EXTENSIFIED) + LAND_DRIVEN.index(name)])
+    main["ghg_prod_kgco2e"] = production_change * intensity[location, col("ghg_prod_kgco2e")]
+    main["ghg_prod_kgco2e_err"] = np.abs(production_change) * intensity[location, col("ghg_prod_kgco2e_err")]
+    main["extensification"] = betas["central"][estimate[location]]
+    main["extensification_std"] = betas["se"][estimate[location]]
+    main["fallback_intensity"] = fallback[location]
+    main["fallback_extensification"] = ext_fallback[location]
     main["production_kg"] = current_production
-    main["arable_m2_current"] = intensity[producer, col("arable_m2")] * current_production
-    main["pasture_m2_current"] = intensity[producer, col("pasture_m2")] * current_production
+    main["arable_m2_current"] = intensity[location, col("arable_m2")] * current_production
+    main["pasture_m2_current"] = intensity[location, col("pasture_m2")] * current_production
     main["land_use_current_m2"] = main["arable_m2_current"] + main["pasture_m2_current"]
-    main["pasture_based_production_kg"] = np.nan if pasture_based is None else pasture_based[producer]
+    main["pasture_based_production_kg"] = np.nan if pasture_based is None else pasture_based[location]
 
-    linear = share[:, None] * intensity[producer]
-    err_cols = [col(f"{name}_err") for name in WITH_ERR]
-    linear[:, err_cols] = np.abs(linear[:, err_cols])
-    per_kg = main[["coi_idx", "producer_idx", "flow", "displaced_kg"]].copy()
-    per_kg["displaced_production_kg"] = share
+    # the linear changes located there, per kg displaced: land (arable, and pasture), the SCALED impacts with
+    # their errors (summed linearly), and production GHG at the location as a producer
+    linear = p["linear"] / m[:, None]
+    pasture_m2 = linear[:, -1]
+    per_kg = main[["coi_idx", "location_idx", "flow", "displaced_kg"]].copy()
+    per_kg["displaced_production_kg"] = production_change / m
     per_kg[["extensification", "extensification_std"]] = main[["extensification", "extensification_std"]].to_numpy()
     for j, name in enumerate(EXT_COLS):
-        per_kg[name] = central[:, j] / m
-    per_kg[VALUE_COLS] = linear
+        per_kg[name] = central[j] / m
+    per_kg["arable_m2"] = linear[:, 0] - pasture_m2
+    per_kg["pasture_m2"] = pasture_m2
+    for j, name in enumerate(SCALED):
+        per_kg[name] = np.abs(linear[:, 1 + j]) if name.endswith("_err") else linear[:, 1 + j]
+    per_kg["ghg_prod_kgco2e"] = main["ghg_prod_kgco2e"].to_numpy() / m
+    per_kg["ghg_prod_kgco2e_err"] = main["ghg_prod_kgco2e_err"].to_numpy() / m
+    per_kg = per_kg[["coi_idx", "location_idx", "flow", "displaced_kg", "displaced_production_kg", "extensification",
+                     "extensification_std", *EXT_COLS, *VALUE_COLS]]
     per_kg["land_use_total_m2"] = per_kg["arable_m2"] + per_kg["pasture_m2"]
     per_kg[["fallback_intensity", "fallback_extensification"]] = main[["fallback_intensity",
                                                                        "fallback_extensification"]].to_numpy()
 
-    # per country of interest: spared is minus its displaced row, leaked the sum of its replacement rows
-    displaced_row = np.nonzero(~replacement)[0]
-    to_scenario = np.zeros((replacement.sum(), len(coi_idx)))
-    to_scenario[np.arange(replacement.sum()), scenario[replacement]] = 1
+    # per country of interest: spared is minus the sum of its displaced rows, leaked the sum of its replacement rows
+    position = np.searchsorted(p["scenarios"], coi_idx)
     summary = pd.DataFrame({"coi_idx": coi_idx, "displaced_kg": displaced_kg, "production_kg": production[coi_idx],
-                            "land_use_current_m2": main["land_use_current_m2"].to_numpy()[displaced_row],
-                            "pasture_based_production_kg": main["pasture_based_production_kg"].to_numpy()[displaced_row]})
+                            "land_use_current_m2": intensity[coi_idx][:, [col("arable_m2"), col("pasture_m2")]].sum(axis=1)
+                            * production[coi_idx],
+                            "pasture_based_production_kg": np.nan if pasture_based is None else pasture_based[coi_idx]})
 
-    def spared_leaked(values):  # (sets x rows) -> spared, leaked (sets x countries of interest)
-        leaked = np.nan_to_num(values[:, replacement]) @ to_scenario.astype(values.dtype)
-        leaked[:, (~np.isnan(central[replacement, 0]) @ to_scenario) == 0] = np.nan
-        return -values[:, displaced_row], leaked
+    # the rows are sorted by scenario then flow, so each scenario x flow's are contiguous
+    groups, group_starts = np.unique(row_s * 2 + row_f, return_index=True)
+
+    def spared_leaked(values):  # (rows x sets) -> spared, leaked (sets x countries of interest)
+        totals = np.zeros((2 * len(p["scenarios"]), values.shape[1]), values.dtype)
+        totals[groups] = np.add.reduceat(values, group_starts, axis=0)
+        totals = totals.reshape(-1, 2, values.shape[1])
+        totals[p["flow_nan"].T] = np.nan
+        return -totals[position, 0].T, totals[position, 1].T
 
     for j, name in enumerate(EXTENSIFIED):
-        spared, leaked = spared_leaked(central[None, :, j])
-        spared_draws, leaked_draws = spared_leaked(draws[:, :, j]) if draws is not None else (None, None)
+        spared, leaked = spared_leaked(central[j][:, None])
+        spared_draws, leaked_draws = spared_leaked(draws[j]) if draws is not None else (None, None)
         with np.errstate(divide="ignore", invalid="ignore"):
             for part, value, value_draws in [
                 ("spared", spared, spared_draws), ("leaked", leaked, leaked_draws),
@@ -591,22 +677,25 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
             ]:
                 _add_spread(summary, f"{name}_{part}", value[0], value_draws, percentiles)
         if name in LAND_DRIVEN:
-            spared_err, leaked_err = spared_leaked(np.abs(central[None, :, len(EXTENSIFIED) + LAND_DRIVEN.index(name)]))
+            spared_err, leaked_err = spared_leaked(np.abs(central[len(EXTENSIFIED) + LAND_DRIVEN.index(name)])[:, None])
             summary[f"{name}_err_spared"], summary[f"{name}_err_leaked"] = -spared_err[0], leaked_err[0]
     for name in ["ghg_prod_kgco2e", "ghg_prod_kgco2e_err"]:
-        spared, leaked = spared_leaked(main[[name]].to_numpy().T)
-        summary[f"{name}_spared"], summary[f"{name}_leaked"] = np.abs(spared[0]), leaked[0]
-    summary["replaced_share"] = share[replacement] @ to_scenario
-    summary["fallback_share"] = (share * fallback[producer])[replacement] @ to_scenario
+        totals = np.zeros((2, len(p["scenarios"])))
+        np.add.at(totals, (row_f, row_s), main[name].to_numpy())
+        summary[f"{name}_spared"], summary[f"{name}_leaked"] = np.abs(totals[0, position]), totals[1, position]
+    summary["replaced_share"] = np.bincount(scenario[replacement], share[replacement], minlength=len(coi_idx))
+    summary["fallback_share"] = np.bincount(scenario[replacement], (share * fallback[producer])[replacement],
+                                            minlength=len(coi_idx))
     return main, per_kg, summary
 
 
 def per_m2_of_spared_land(per_kg: pd.DataFrame) -> pd.DataFrame:
-    """Rescale the per-kg leakage to per m2 of land spared in the country of interest
-    (its own arable + pasture per kg, feed land included), EXT_COLS too."""
+    """Rescale the per-kg leakage to per m2 of land spared by the country of
+    interest (the linear arable + pasture per kg of its displaced rows, wherever
+    that land is, feed land included), EXT_COLS too."""
     keys = ["COUNTRY_OF_INTEREST_CODE", "ItemT_Code", "size"]
-    spared = per_kg.loc[per_kg["flow"] == "displaced", keys + ["land_use_total_m2"]]
-    spared = spared.rename(columns={"land_use_total_m2": "_spared_m2"})
+    spared = (per_kg.loc[per_kg["flow"] == "displaced"].groupby(keys, as_index=False)["land_use_total_m2"].sum()
+              .rename(columns={"land_use_total_m2": "_spared_m2"}))
     out = per_kg.merge(spared, on=keys, how="left")
     scale = -out.pop("_spared_m2").where(lambda s: s != 0)
     for col in ["displaced_production_kg", "land_use_total_m2"] + EXT_COLS + VALUE_COLS:

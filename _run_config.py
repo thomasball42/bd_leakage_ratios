@@ -19,6 +19,8 @@ from pathlib import Path
 
 REPO_DIR = Path(__file__).resolve().parent
 RECORD_KEY = "provenance"  # the section a run's record adds to its config
+RAW_OUTPUTS = "raw_outputs"  # the run folder's subfolder for the results files; the record stays in the run folder
+INPUTS = "inputs"  # the run folder's subfolder for inputs built for the run (impacts_matrices/)
 # every setting, by group (see the README); a config must have exactly these
 SETTINGS = {
     "run": ["run_name", "year", "countries"],

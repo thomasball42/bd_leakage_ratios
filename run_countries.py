@@ -16,9 +16,9 @@ with N processes running the items in parallel (the results are the same). Input
     DATA_DIR          country_codes.csv and commodity_crosswalk.csv, plus beta_crops.csv
                       and beta_animals.csv from _get_extensification_data.py, for the
                       betas (beta_{year}, se_{year}) of FLMP's year
-For each displacement size, the results go to RESULTS_DIR/RUN_NAME, with the run's
-record (its config plus the repository version and input checksums) as config.json,
-from which it can be rerun.
+For each displacement size, the results go to RESULTS_DIR/RUN_NAME/raw_outputs, with
+the run's record (its config plus the repository version and input checksums) as
+RESULTS_DIR/RUN_NAME/config.json, from which it can be rerun.
 """
 
 import argparse
@@ -63,8 +63,10 @@ COUNTRIES: list[str] | None = config["run"]["countries"]  # ISO3 codes, e.g. ["G
 FLMP_RESULTS_DIR = _run_config.resolve(config["paths"]["flmp_results_dir"])
 RESULTS_DIR = _run_config.resolve(config["paths"]["results_dir"])
 RUN_DIR = RESULTS_DIR / RUN_NAME
-# where _build_bd_prod_impacts_matrix writes its outputs; None for RUN_DIR/impacts_matrices
-IMPACTS_DIR = _run_config.resolve(config["paths"]["impacts_dir"]) or RUN_DIR / "impacts_matrices"
+OUT_DIR = RUN_DIR / _run_config.RAW_OUTPUTS  # the results files
+# where _build_bd_prod_impacts_matrix writes its outputs; None for RUN_DIR/inputs/impacts_matrices
+IMPACTS_DIR = (_run_config.resolve(config["paths"]["impacts_dir"])
+               or RUN_DIR / _run_config.INPUTS / "impacts_matrices")
 IMPACTS_PATH = IMPACTS_DIR / f"prod_impacts_long_{YEAR}.csv"
 FEED_MIX_PATH = IMPACTS_DIR / f"feed_mix_long_{YEAR}.csv"
 DATA_DIR = _run_config.resolve(config["paths"]["data_dir"])
@@ -99,6 +101,7 @@ PER_M2: bool = config["outputs"]["per_m2"]
 
 RUN_DIR.mkdir(exist_ok=True, parents=True)
 _run_config.check_run_dir(config, RUN_DIR)
+OUT_DIR.mkdir(exist_ok=True)
 
 if not (IMPACTS_PATH.exists() and FEED_MIX_PATH.exists()):
     print(f"{IMPACTS_PATH} or {FEED_MIX_PATH} not found, building them from {FLMP_RESULTS_DIR}")
@@ -143,19 +146,19 @@ if no_betas:
 
 def label(table: pd.DataFrame, item_code: int, size: float) -> pd.DataFrame:
     """Add the item, the size and the countries' codes and ISO3s to a table from
-    leakage_for_item, in place of its coi_idx and producer_idx."""
+    leakage_for_item, in place of its coi_idx and location_idx."""
     out = pd.DataFrame({
         "COUNTRY_OF_INTEREST": [isos.get(code) for code in codes[table["coi_idx"]]],
         "COUNTRY_OF_INTEREST_CODE": codes[table["coi_idx"]],
     })
-    if "producer_idx" in table:
+    if "location_idx" in table:
         out["flow"] = table["flow"].to_numpy()
-        out["Producer_ISO"] = [isos.get(code) for code in codes[table["producer_idx"]]]
-        out["Producer_Country_Code"] = codes[table["producer_idx"]]
+        out["Location_ISO"] = [isos.get(code) for code in codes[table["location_idx"]]]
+        out["Location_Country_Code"] = codes[table["location_idx"]]
     out["ItemT_Name"] = item_names.get(item_code, impact_item_names.get(item_code))
     out["ItemT_Code"] = item_code
     out["size"] = size
-    rest = table.drop(columns=[col for col in ["coi_idx", "producer_idx", "flow"] if col in table])
+    rest = table.drop(columns=[col for col in ["coi_idx", "location_idx", "flow"] if col in table])
     return pd.concat([out, rest.reset_index(drop=True)], axis=1)
 
 
@@ -212,16 +215,16 @@ with (multiprocessing.get_context("fork").Pool(WORKERS, initializer=signal.signa
         if unextensified.any():
             print(f"No extensified results for {unextensified.sum()} country x items displacing {size} {SIZE_UNIT}, "
                   f"where a land source would lose more than it produces, or with no data for any of their land")
-        files = {RUN_DIR / f"{iso}_leakage.csv": country for iso, country in main.groupby("COUNTRY_OF_INTEREST")}
-        files[RUN_DIR / "leakage_summary.csv"] = summary
+        files = {OUT_DIR / f"{iso}_leakage.csv": country for iso, country in main.groupby("COUNTRY_OF_INTEREST")}
+        files[OUT_DIR / "leakage_summary.csv"] = summary
         if PER_KG or PER_M2:
             per_kg = pd.concat(per_kgs, ignore_index=True)
             if PER_KG:
-                files.update({RUN_DIR / f"{iso}_leakage_per_kg.csv": country
+                files.update({OUT_DIR / f"{iso}_leakage_per_kg.csv": country
                               for iso, country in per_kg.groupby("COUNTRY_OF_INTEREST")})
             if PER_M2:
                 per_m2 = _leakage_funcs.per_m2_of_spared_land(per_kg)
-                files.update({RUN_DIR / f"{iso}_leakage_per_m2.csv": country
+                files.update({OUT_DIR / f"{iso}_leakage_per_m2.csv": country
                               for iso, country in per_m2.groupby("COUNTRY_OF_INTEREST")})
         # each file gets one table a size, so the workers can write them all at once; waiting for them keeps each
         # file's sizes in order
@@ -234,4 +237,4 @@ inputs += [DATA_DIR / name for name in ["country_codes.csv", "commodity_crosswal
 record_path = _run_config.write_record(config, args.config, RUN_DIR, inputs)
 
 print(f"Wrote leakage for {main['COUNTRY_OF_INTEREST'].nunique()} countries and {len(SIZES)} displacement sizes to "
-      f"{RUN_DIR}, and the run's record to {record_path}")
+      f"{OUT_DIR}, and the run's record to {record_path}")
