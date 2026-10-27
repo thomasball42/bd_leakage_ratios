@@ -24,10 +24,10 @@ INPUTS = "inputs"  # the run folder's subfolder for inputs built for the run (im
 # every setting, by group (see the README); a config must have exactly these
 SETTINGS = {
     "run": ["run_name", "year", "countries"],
-    "paths": ["flmp_results_dir", "results_dir", "impacts_dir", "data_dir"],
+    "paths": ["flmp_results_dir", "results_dir", "impacts_dir", "data_dir", "figs_dir"],
     "displacement": ["unit", "sizes", "sizes_dist", "sizes_n", "sizes_range"],
     "replacement": ["comprehensive", "exclude_self"],
-    "extensification": ["use_beta", "value", "std", "clipping"],
+    "extensification": ["use_beta", "beta_year", "beta_files", "value", "std", "clipping"],
     "monte_carlo": ["draws", "seed", "percentiles"],
     "outputs": ["per_kg", "per_m2"],
 }
@@ -68,6 +68,13 @@ def load(path: Path) -> dict:
             problems.append(f"extensification.value must be a number when use_beta is false, not {value!r}")
         if not number(std) or std < 0:
             problems.append(f"extensification.std must be a number from 0 when use_beta is false, not {std!r}")
+    beta_year, beta_files = (config["extensification"][key] for key in ["beta_year", "beta_files"])
+    if beta_year is not None and (not isinstance(beta_year, int) or isinstance(beta_year, bool)):
+        problems.append(f"extensification.beta_year must be a year, or null for run.year, not {beta_year!r}")
+    if (not isinstance(beta_files, dict) or set(beta_files) != {"crops", "animals"}
+            or not all(isinstance(name, str) and name for name in beta_files.values())):
+        problems.append(f"extensification.beta_files must name the crops and animals files, e.g. "
+                        f'{{"crops": "beta_crops.csv", "animals": "beta_animals.csv"}}, not {beta_files!r}')
     draws, seed, percentiles = (config["monte_carlo"][key] for key in ["draws", "seed", "percentiles"])
     if not isinstance(draws, int) or isinstance(draws, bool) or draws < 0 or draws == 1:
         problems.append(f"monte_carlo.draws must be 0 (central values only) or a whole number from 2, not {draws!r}")

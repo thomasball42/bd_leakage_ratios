@@ -36,9 +36,16 @@ of it.
 `percentile` gives the cells' percentiles over the run's draws, for per_kg and
 spared. The ratio, share and net cells have none, as they combine values whose
 draws aren't in the raw outputs; their rows' sums, the leakage ratios, do
-(leakage_ratio). m["replaced_share"] is the share of C's displaced production that
+(leakage_ratio). So do the per_kg and spared rows' sums, what C leaks and spares
+in all (totals), whose percentiles, unlike sums of the cells', are their own. m["replaced_share"] is the share of C's displaced production that
 each location replaces as a producer, the same at every size; frame() labels it,
 or any other countries x locations array.
+
+load("portfolio") gives the portfolio matrix written by build_portfolio_matrices.py,
+in the same form: each country's row per kg of its production portfolio displaced,
+its row of each item it produces weighted by its production of the item, so a
+country that produces only wheat has the wheat matrix's row. It has the leakage
+ratios, but no percentiles; its weights and covered_share are documented there.
 """
 
 from pathlib import Path
@@ -53,6 +60,7 @@ EXTENSIFIED = METRICS[:3]  # with percentiles, and leakage ratios, in the run's 
 KINDS = ["per_kg", "spared", "net", "ratio", "share"]
 SUBDIR = "flow_matrices"  # in the run's processed folder
 INDEX = "items.csv"  # in SUBDIR, listing the items' files
+PORTFOLIO = "portfolio"  # load()'s name for the portfolio matrix, {PORTFOLIO}.npz in SUBDIR
 
 
 def flow_dir(config_path: Path = _run_paths.DEFAULT_CONFIG) -> Path:
@@ -67,16 +75,21 @@ def items(config_path: Path = _run_paths.DEFAULT_CONFIG) -> pd.DataFrame:
 
 
 def load(item: int | str, config_path: Path = _run_paths.DEFAULT_CONFIG) -> dict[str, np.ndarray]:
-    """One item's flow matrices, by its item code or name (in any case)."""
+    """One item's flow matrices, by its item code or name (in any case), or the
+    portfolio matrix, for "portfolio"."""
     directory = flow_dir(config_path)
-    index = pd.read_csv(directory / INDEX)
-    if isinstance(item, (int, np.integer)):
-        match = index[index["item_code"] == item]
+    if isinstance(item, str) and item.lower() == PORTFOLIO:
+        path = directory / f"{PORTFOLIO}.npz"
     else:
-        match = index[index["item_name"].str.lower() == item.lower()]
-    if len(match) != 1:
-        raise KeyError(f"No flow matrices for item {item!r} in {directory / INDEX}")
-    with np.load(directory / match["file"].iloc[0]) as f:
+        index = pd.read_csv(directory / INDEX)
+        if isinstance(item, (int, np.integer)):
+            match = index[index["item_code"] == item]
+        else:
+            match = index[index["item_name"].str.lower() == item.lower()]
+        if len(match) != 1:
+            raise KeyError(f"No flow matrices for item {item!r} in {directory / INDEX}")
+        path = directory / match["file"].iloc[0]
+    with np.load(path) as f:
         return {key: f[key] for key in f.files}
 
 
@@ -150,3 +163,18 @@ def leakage_ratio(m: dict, metric: str, size: float | None = None) -> pd.DataFra
     columns = [key for key in m if key == f"{metric}_ratio" or key.startswith(f"{metric}_ratio_p")]
     return pd.DataFrame({key.removeprefix(f"{metric}_"): m[key][i] for key in columns},
                         index=pd.Index(m["country_isos"], name="displacing"))
+
+
+def totals(m: dict, metric: str, kind: str = "leaked", percentile: float | None = None) -> np.ndarray:
+    """(sizes x countries) array of all C leaks or spares (`kind`) of `metric`,
+    per kg displaced, the rows' sums of the per_kg or spared matrix, central or
+    at a `percentile` over the run's draws. Unlike the cells', these percentiles
+    are the totals' own."""
+    if kind not in ["leaked", "spared"]:
+        raise ValueError(f"kind must be leaked or spared, not {kind!r}")
+    key = f"{metric}_{kind}_total" + ("" if percentile is None else f"_p{percentile:g}")
+    if key not in m:
+        raise ValueError(f"No {key} in these flow matrices: the totals' percentiles are for {EXTENSIFIED}, at the "
+                         "run's percentiles, and not for the portfolio; or the matrices were built before the totals "
+                         "were added, and need rebuilding")
+    return m[key]

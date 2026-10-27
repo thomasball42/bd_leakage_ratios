@@ -186,31 +186,34 @@ def pasture_based_production(intensities: dict[int, tuple[np.ndarray, np.ndarray
     return total
 
 
-def load_extensification(use_beta: bool, value: float | None, std: float | None, data_dir: Path, year: int,
-                         codes: np.ndarray, items: list[int], intensities: dict[int, tuple[np.ndarray, np.ndarray]],
+def load_extensification(use_beta: bool, value: float | None, std: float | None, data_dir: Path,
+                         beta_files: dict[str, str], year: int, codes: np.ndarray, items: list[int],
+                         intensities: dict[int, tuple[np.ndarray, np.ndarray]],
                          ) -> tuple[np.ndarray, np.ndarray, dict[int, tuple[np.ndarray, np.ndarray]]]:
     """The beta estimates, and which one each producer of each item uses.
 
-    The estimates are the rows of data/beta_crops.csv and data/beta_animals.csv
-    for the countries in `codes` and the World, with beta_{year} and se_{year}
-    for the FLMP `year` if `use_beta`, or otherwise `value` and `std` in place of
-    every row's. Rows with an se above MAX_BETA_SE are left out, as unfitted.
+    The estimates are the rows of the "crops" and "animals" `beta_files` in
+    data_dir (beta_crops.csv and beta_animals.csv by default) for the countries in
+    `codes` and the World, with beta_{year} and se_{year} for the betas' `year` if
+    `use_beta`, or otherwise `value` and `std` in place of every row's. Rows with
+    an se above MAX_BETA_SE are left out, as unfitted.
     Returns each estimate's central beta and standard deviation,
     as arrays with a NaN appended (so estimate -1, none, gives NaN), and per item
     each producer's estimate on the `codes` index and a mask of the producers
     that use the item's World row as they have none of their own.
 
     PASTURE_ITEMS use their country's "All pasture-based animal products" row
-    (Item Code 0 of beta_animals.csv), except where they have no pasture
+    (Item Code 0 of the animals file), except where they have no pasture
     (feed-fed: pigs, poultry, eggs), which get none, as only their feed
     extensifies.
     """
     beta_col, se_col = f"beta_{year}", f"se_{year}"
     tables = []
-    for name, item_filter in [("beta_crops.csv", None), ("beta_animals.csv", 0)]:
+    for name, item_filter in [(beta_files["crops"], None), (beta_files["animals"], 0)]:
         path = data_dir / name
         if not {beta_col, se_col} <= set(pd.read_csv(path, nrows=0).columns):
-            raise ValueError(f"{path} has no {beta_col}/{se_col}: the betas must be for the FLMP year, {year}")
+            raise ValueError(f"{path} has no {beta_col}/{se_col}, for the betas' year {year} "
+                             f"(extensification.beta_year, or run.year where that is null)")
         table = pd.read_csv(path, usecols=lambda col: col in {"Area Code", "Item Code", "is_aggregate", beta_col,
                                                                   se_col})
         if "is_aggregate" in table:
@@ -616,7 +619,8 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
         if name in LAND_DRIVEN:
             main[f"{name}_err"] = np.abs(central[len(EXTENSIFIED) + LAND_DRIVEN.index(name)])
     main["ghg_prod_kgco2e"] = production_change * intensity[location, col("ghg_prod_kgco2e")]
-    main["ghg_prod_kgco2e_err"] = np.abs(production_change) * intensity[location, col("ghg_prod_kgco2e_err")]
+    # FLMP's error takes the sign of its value, so it's negative where production GHG is
+    main["ghg_prod_kgco2e_err"] = np.abs(production_change * intensity[location, col("ghg_prod_kgco2e_err")])
     main["extensification"] = betas["central"][estimate[location]]
     main["extensification_std"] = betas["se"][estimate[location]]
     main["fallback_intensity"] = fallback[location]
@@ -682,7 +686,10 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
     for name in ["ghg_prod_kgco2e", "ghg_prod_kgco2e_err"]:
         totals = np.zeros((2, len(p["scenarios"])))
         np.add.at(totals, (row_f, row_s), main[name].to_numpy())
-        summary[f"{name}_spared"], summary[f"{name}_leaked"] = np.abs(totals[0, position]), totals[1, position]
+        # spared is minus the displaced rows' sum, so it's negative where the item's production GHG is; the errors are
+        # positive in every row (above), so theirs is the sum
+        spared = totals[0, position] if name.endswith("_err") else -totals[0, position]
+        summary[f"{name}_spared"], summary[f"{name}_leaked"] = spared, totals[1, position]
     summary["replaced_share"] = np.bincount(scenario[replacement], share[replacement], minlength=len(coi_idx))
     summary["fallback_share"] = np.bincount(scenario[replacement], (share * fallback[producer])[replacement],
                                             minlength=len(coi_idx))

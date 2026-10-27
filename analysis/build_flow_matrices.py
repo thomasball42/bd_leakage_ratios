@@ -11,14 +11,16 @@ extensified land use, extinctions and carbon opportunity cost leaked to (the
 replacement rows) and spared at (the displaced rows) each location, with their
 percentiles over the draws, and production GHG; and the share of C's displaced
 production that each location replaces as a producer. With them, from
-leakage_summary.csv: what C spares in all, and C's leakage ratios (leaked /
-spared) with their percentiles. flow_matrices.py turns these into the ratio,
+leakage_summary.csv: what C spares and leaks in all, and C's leakage ratios
+(leaked / spared), with the percentiles of each over the draws, which unlike the
+cells' are the totals' own. flow_matrices.py turns these into the ratio,
 share and net matrices, and documents them.
 
 Written to the run folder's processed/flow_matrices/, as {item_code}_{item}.npz,
 with items.csv listing them. Each item is checked against the summary: the rows of
-its ratio matrices must sum to C's leakage ratios, those of its spared matrices to
-what C spares, and those of its replaced shares to C's replaced share.
+its ratio matrices must sum to C's leakage ratios, those of its spared and leaked
+matrices to what C spares and leaks, and those of its replaced shares to C's
+replaced share.
 """
 
 import argparse
@@ -60,8 +62,10 @@ ROW_COLS = ["COUNTRY_OF_INTEREST_CODE", "flow", "Location_Country_Code", "ItemT_
             "production_change_kg", *METRICS, *SPREAD_COLS, "extensification", "fallback_intensity",
             "fallback_extensification", "production_kg"]
 RATIO_COLS = [f"{metric}_ratio{suffix}" for metric in EXTENSIFIED for suffix in ["", *(f"_{p}" for p in PERCENTILES)]]
+TOTAL_COLS = [f"{metric}_{kind}{suffix}" for metric in METRICS for kind in ["spared", "leaked"]
+              for suffix in ["", *(f"_{p}" for p in PERCENTILES if metric in EXTENSIFIED)]]
 SUMMARY_COLS = ["COUNTRY_OF_INTEREST_CODE", "ItemT_Code", "ItemT_Name", "size", "displaced_kg", "production_kg",
-                "land_use_current_m2", "replaced_share", *(f"{metric}_spared" for metric in METRICS), *RATIO_COLS]
+                "land_use_current_m2", "replaced_share", *TOTAL_COLS, *RATIO_COLS]
 
 isos = _leakage_funcs.load_country_isos(DATA_DIR)
 summary = pd.read_csv(RAW_DIR / "leakage_summary.csv", usecols=SUMMARY_COLS)
@@ -141,6 +145,7 @@ def build_item(task: tuple[int, pd.DataFrame, pd.DataFrame]) -> dict:
     arrays = {
         "item_code": np.array(item_code), "item_name": np.array(item_name),
         "run_name": np.array(config["run"]["run_name"]), "size_unit": np.array(config["displacement"]["unit"]),
+        "mc_draws": np.array(config["monte_carlo"]["draws"]),
         "sizes": SIZES, "countries": countries, "country_isos": labels(countries),
         "locations": locations, "location_isos": labels(locations),
         "displaced_kg": grid("displaced_kg"),
@@ -160,23 +165,29 @@ def build_item(task: tuple[int, pd.DataFrame, pd.DataFrame]) -> dict:
     for metric in METRICS:
         leaked, spared = cube(metric, True), cube(metric, False)
         spared_total = grid(f"{metric}_spared") / arrays["displaced_kg"]
+        leaked_total = grid(f"{metric}_leaked") / arrays["displaced_kg"]
         arrays[f"{metric}_leaked"] = leaked.astype(np.float32)
         arrays[f"{metric}_spared"] = spared.astype(np.float32)
         arrays[f"{metric}_spared_total"] = spared_total
+        arrays[f"{metric}_leaked_total"] = leaked_total
         if metric not in EXTENSIFIED:
             continue
         for p in PERCENTILES:
             arrays[f"{metric}_leaked_{p}"] = cube(f"{metric}_{p}", True).astype(np.float32)
             if p in COMPLEMENT:
                 arrays[f"{metric}_spared_{p}"] = cube(f"{metric}_{p}", False).astype(np.float32)
+            for kind in ["spared", "leaked"]:
+                arrays[f"{metric}_{kind}_total_{p}"] = grid(f"{metric}_{kind}_{p}") / arrays["displaced_kg"]
         for column in RATIO_COLS:
             if column.startswith(f"{metric}_ratio"):
                 arrays[column] = grid(column)
-        # the rows of the spared matrix sum to what C spares, and of the ratio matrix to C's leakage ratio,
-        # relative to the sizes of their cells
+        # the rows of the spared and leaked matrices sum to what C spares and leaks, and of the ratio matrix to C's
+        # leakage ratio, relative to the sizes of their cells
         with np.errstate(divide="ignore", invalid="ignore"):
             checks[f"{metric}_spared"] = relative_error(np.nansum(spared, axis=-1), spared_total,
                                                         np.nansum(np.abs(spared), axis=-1))
+            checks[f"{metric}_leaked"] = relative_error(np.nansum(leaked, axis=-1), leaked_total,
+                                                        np.nansum(np.abs(leaked), axis=-1))
             checks[f"{metric}_ratio"] = relative_error(np.nansum(leaked, axis=-1) / spared_total,
                                                        arrays[f"{metric}_ratio"],
                                                        np.nansum(np.abs(leaked), axis=-1) / np.abs(spared_total))

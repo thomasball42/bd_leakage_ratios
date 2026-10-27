@@ -1,6 +1,6 @@
 {
   "run": {
-    "run_name": "261021_share_sweep",
+    "run_name": "261027_beta_update",
     "year": 2021,
     "countries": null
   },
@@ -8,13 +8,14 @@
     "flmp_results_dir": "/maps/tsb42/flmp/flmp_results/261019",
     "results_dir": "/maps/tsb42/leakage_flows/bd_leakage_ratios_results",
     "impacts_dir": null,
-    "data_dir": "data"
+    "data_dir": "data",
+    "figs_dir": "../figures"
   },
   "displacement": {
     "unit": "share",
     "sizes": [],
     "sizes_dist": "geometric",
-    "sizes_n": 50,
+    "sizes_n": 20,
     "sizes_range": [1E-7, 0.30]
   },
   "replacement": {
@@ -23,6 +24,8 @@
   },
   "extensification": {
     "use_beta": true,
+    "beta_year": 2019,
+    "beta_files": {"crops": "beta_crops_phys.csv", "animals": "beta_animals_phys.csv"},
     "value": 0.0,
     "std": 0.0,
     "clipping": [null, null]

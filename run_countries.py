@@ -14,8 +14,9 @@ with N processes running the items in parallel (the results are the same). Input
                       built from FLMP_RESULTS_DIR into IMPACTS_DIR by
                       _build_bd_prod_impacts_matrix.py if missing
     DATA_DIR          country_codes.csv and commodity_crosswalk.csv, plus beta_crops.csv
-                      and beta_animals.csv from _get_extensification_data.py, for the
-                      betas (beta_{year}, se_{year}) of FLMP's year
+                      and beta_animals.csv from _get_extensification_data.py (or the
+                      BETA_FILES), for the betas (beta_{year}, se_{year}) of FLMP's
+                      year (or BETA_YEAR)
 For each displacement size, the results go to RESULTS_DIR/RUN_NAME/raw_outputs, with
 the run's record (its config plus the repository version and input checksums) as
 RESULTS_DIR/RUN_NAME/config.json, from which it can be rerun.
@@ -57,7 +58,7 @@ config = _run_config.load(args.config)
 
 ### Configuration variables, from the config (relative paths from the repository folder) ###
 RUN_NAME: str = config["run"]["run_name"]
-YEAR: int = config["run"]["year"]  # of the FLMP results and of the betas
+YEAR: int = config["run"]["year"]  # of the FLMP results, and of the betas unless BETA_YEAR
 COUNTRIES: list[str] | None = config["run"]["countries"]  # ISO3 codes, e.g. ["GBR"]; None runs every country
 
 FLMP_RESULTS_DIR = _run_config.resolve(config["paths"]["flmp_results_dir"])
@@ -88,6 +89,9 @@ COMPREHENSIVE: bool = config["replacement"]["comprehensive"]
 EXCLUDE_SELF: bool = config["replacement"]["exclude_self"]
 
 USE_BETA: bool = config["extensification"]["use_beta"]  # the betas in DATA_DIR, or else VALUE and STD for every one
+# the year of the betas' beta_{year} and se_{year} columns; None for YEAR
+BETA_YEAR: int = YEAR if config["extensification"]["beta_year"] is None else config["extensification"]["beta_year"]
+BETA_FILES: dict[str, str] = config["extensification"]["beta_files"]  # the "crops" and "animals" betas, in DATA_DIR
 EXTENSIFICATION_VALUE: float | None = config["extensification"]["value"]
 EXTENSIFICATION_STD: float | None = config["extensification"]["std"]
 CLIPPING = None if config["extensification"]["clipping"] is None else tuple(config["extensification"]["clipping"])
@@ -121,8 +125,8 @@ feed_mix = _leakage_funcs.load_feed_mix(FEED_MIX_PATH, codes)
 feed_items = sorted({feed_item for mix in feed_mix.values() for feed_item in mix["feed_item"]})
 pasture_based = _leakage_funcs.pasture_based_production(intensities, production, len(codes))
 beta_hat, beta_se, estimates = _leakage_funcs.load_extensification(
-    USE_BETA, EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, DATA_DIR, YEAR, codes, sorted(set(items) | set(feed_items)),
-    intensities)
+    USE_BETA, EXTENSIFICATION_VALUE, EXTENSIFICATION_STD, DATA_DIR, BETA_FILES, BETA_YEAR, codes,
+    sorted(set(items) | set(feed_items)), intensities)
 betas = _leakage_funcs.draw_betas(beta_hat, beta_se, CLIPPING, DRAWS, SEED)
 
 if COUNTRIES is None:
@@ -232,8 +236,8 @@ with (multiprocessing.get_context("fork").Pool(WORKERS, initializer=signal.signa
         written.update(files)
 
 inputs = [FLMP_RESULTS_DIR / str(YEAR) / ".mrio" / "TradeMatrix_import_dry_matter.csv", IMPACTS_PATH, FEED_MIX_PATH]
-inputs += [DATA_DIR / name for name in ["country_codes.csv", "commodity_crosswalk.csv", "beta_crops.csv",
-                                        "beta_animals.csv"]]
+inputs += [DATA_DIR / name for name in ["country_codes.csv", "commodity_crosswalk.csv", BETA_FILES["crops"],
+                                        BETA_FILES["animals"]]]
 record_path = _run_config.write_record(config, args.config, RUN_DIR, inputs)
 
 print(f"Wrote leakage for {main['COUNTRY_OF_INTEREST'].nunique()} countries and {len(SIZES)} displacement sizes to "

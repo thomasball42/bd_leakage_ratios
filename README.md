@@ -5,7 +5,7 @@ Calcultes market leakage of displaced agricultural production: when a country pr
 
 1. An FLMP results dir (`paths.flmp_results_dir`), from [FLMP](https://github.com/louis-de-neve/mrio_pipeline) run for the year you want. It's only read from: the trade matrix `{year}/.mrio/TradeMatrix_import_dry_matter.csv`, and for the build below the feed matrix and every `{year}/*/impacts_full.csv`.
 2. `prod_impacts_long_{year}.csv` and `feed_mix_long_{year}.csv` in `paths.impacts_dir`: per-kg production impacts and production by producing country and item, and the feed by crop and origin per kg of each animal product by producing country. If either is missing, `run_countries.py` builds them first with `_build_bd_prod_impacts_matrix.py`. To build them on their own, run `python _build_bd_prod_impacts_matrix.py --year {year} --results-dir {flmp_results_dir} --out-dir {impacts_dir}`.
-3. `data/`: `country_codes.csv` and `commodity_crosswalk.csv`, already in this repo, and `beta_crops.csv` and `beta_animals.csv`, downloaded by `python _get_extensification_data.py`. Only their `beta_{year}` and `se_{year}` columns are used, for the FLMP year.
+3. `data/`: `country_codes.csv` and `commodity_crosswalk.csv`, already in this repo, and `beta_crops.csv` and `beta_animals.csv`, downloaded by `python _get_extensification_data.py`, or other betas files named in `extensification.beta_files`. Only their `beta_{year}` and `se_{year}` columns are used, for the FLMP year or `extensification.beta_year`.
 
 Then run `python run_countries.py`, which uses the repository's `config.json`, or `python run_countries.py path/to/config.json`. Add `--workers N` to run the items in N processes at once (see Running in parallel).
 
@@ -24,12 +24,13 @@ The workers are forked, which needs Linux or macOS, and use one BLAS thread each
 | Setting | |
 |---|---|
 | `run.run_name` | The run's folder name, under `paths.results_dir`. |
-| `run.year` | The year of the FLMP results and of the betas (`beta_{year}`, `se_{year}`). Everything uses this one year. |
+| `run.year` | The year of the FLMP results, and of the betas (`beta_{year}`, `se_{year}`) unless `extensification.beta_year` is set. |
 | `run.countries` | ISO3 codes of the countries of interest, e.g. `["GBR"]`, or `null` for every country. |
 | `paths.flmp_results_dir` | The FLMP results dir. |
 | `paths.results_dir` | Where the run folders go. |
 | `paths.impacts_dir` | Where `prod_impacts_long` and `feed_mix_long` are read from, and built if missing. `null` for `{results_dir}/{run_name}/inputs/impacts_matrices`; point several runs on the same FLMP results at one folder to build them only once. |
 | `paths.data_dir` | The folder with the files in Inputs 3. |
+| `paths.figs_dir` | Where the analysis scripts' figures go, in a `{run_name}` folder. `null` for `{results_dir}/figures`. |
 | `displacement.unit` | `"kg"`, or `"share"` for a share of each country of interest's FLMP production of the item. |
 | `displacement.sizes` | The displacement sizes to run, in that unit, e.g. `[1]` kg or `[0.001, 0.01, 0.1, 0.5]` of production. Or `[]` to generate them from `sizes_range`, `sizes_dist` and `sizes_n`. Every size uses the same Monte Carlo draws. |
 | `displacement.sizes_range` | When `sizes` is `[]`: `[lower, upper]` bounds of the generated sizes, both included, in that unit, e.g. `[0.001, 1]` of production or `[1, 100000000]` kg. |
@@ -37,7 +38,9 @@ The workers are forked, which needs Linux or macOS, and use one BLAS thread each
 | `displacement.sizes_n` | When `sizes` is `[]`: the number of sizes to generate. |
 | `replacement.comprehensive` | See Options. |
 | `replacement.exclude_self` | See Options. |
-| `extensification.use_beta` | `true` to use the betas in `data/beta_*.csv` (`value` and `std` are then ignored), or `false` to use `value` and `std` in place of every beta and se there. See Options. |
+| `extensification.use_beta` | `true` to use the betas in `beta_files` (`value` and `std` are then ignored), or `false` to use `value` and `std` in place of every beta and se there. See Options. |
+| `extensification.beta_year` | The year of the betas' `beta_{year}` and `se_{year}` columns, e.g. where the betas don't reach the FLMP year, or `null` for `run.year`. |
+| `extensification.beta_files` | The betas files in `paths.data_dir`, as `{"crops": "beta_crops.csv", "animals": "beta_animals.csv"}`. |
 | `extensification.value` | The extensification factor used in place of every beta, when `use_beta` is `false`. |
 | `extensification.std` | The standard deviation used in place of every beta's se, when `use_beta` is `false`. |
 | `extensification.clipping` | `[lower, upper]` bounds the betas are clipped to, central and drawn, with `null` for no bound, e.g. `[0, null]` clips at 0 but not above; or `null` for no clipping. |
