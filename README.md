@@ -9,7 +9,7 @@ Calcultes market leakage of displaced agricultural production: when a country pr
 
 Then run `python run_countries.py`, which uses the repository's `config.json`, or `python run_countries.py path/to/config.json`. Add `--workers N` to run the items in N processes at once (see Running in parallel).
 
-For all countries and items, each displacement size takes about 6 minutes with 1,000 Monte Carlo draws, or about 1.5 minutes with 100. Building the impacts matrices takes another minute and a half the first time. Peak memory is about 2 GB at 1,000 draws, and each size writes about 0.5 GB of results.
+For all countries and items, each displacement size takes about 6 minutes with 1,000 Monte Carlo draws, or about 1.5 minutes with 100. Building the impacts matrices takes another minute and a half the first time. Peak memory is about 2 GB at 1,000 draws, and each size writes about 0.5 GB of results. Saving the draws (`monte_carlo.save_draws`) takes about 1 GB more memory for each size and each of the portfolio and items saved, with every country and 1,000 draws (the run prints how much), and writes files up to that size.
 
 ## Running in parallel
 
@@ -44,13 +44,16 @@ The workers are forked, which needs Linux or macOS, and use one BLAS thread each
 | `extensification.value` | The extensification factor used in place of every beta, when `use_beta` is `false`. |
 | `extensification.std` | The standard deviation used in place of every beta's se, when `use_beta` is `false`. |
 | `extensification.clipping` | `[lower, upper]` bounds the betas are clipped to, central and drawn, with `null` for no bound, e.g. `[0, null]` clips at 0 but not above; or `null` for no clipping. |
+| `extensification.shrinkage` | `true` to shrink each country's beta towards its item's mean over countries, by how uncertain it is, before drawing and clipping; or `false`. Only with `use_beta`. See Options. |
+| `feed.max_ratio_to_median` | A cap on each producer's feed per kg of an animal product, as a multiple of the item's production-weighted median over producers, e.g. `3`; or `null` for no cap. See Options. |
 | `monte_carlo.draws` | The number of Monte Carlo draws of the betas, or 0 for central values only. |
 | `monte_carlo.seed` | The random seed for the draws. |
 | `monte_carlo.percentiles` | The percentiles of the draws to report, e.g. `[5, 50, 95]`. |
+| `monte_carlo.save_draws` | Also save what each country spares and leaks at each location in each draw, for the production portfolio and the items listed, at the sizes listed, e.g. `{"sizes": [0.0001], "items": [867]}` (each size one of the run's, to within 1%); or `null` for none. See Outputs. |
 | `outputs.per_kg` | Also write the per-kg files (see Outputs). |
 | `outputs.per_m2` | Also write the per m² of spared land files. |
 
-Relative paths are from the repository folder.
+Relative paths are from the repository folder. A config (or a run's record) without `extensification.shrinkage`, `feed.max_ratio_to_median` or `monte_carlo.save_draws`, from before they were added, gets `false`, `null` and `null`, as those runs had.
 
 ## Recreating a run
 
@@ -96,7 +99,7 @@ Within each country of interest's scenario, the changes at each source are nette
 
 Because the curve isn't linear, the results depend on the displacement size relative to each source's production. At small sizes they're the marginal values: β times each source's land per kg. For β < 1, a larger displacement frees more land per kg at home and needs less per kg elsewhere, so leaked ÷ spared falls. A country × item where a source would lose more than it produces has no extensified results.
 
-**Monte Carlo.** Each draw takes every beta estimate (each row of `data/beta_*.csv`, World rows included) from Normal(β, se), independently, and clips it if `clipping` is set. A beta gets the same draw everywhere it's used in that draw: on both sides of a scenario, in every scenario, and as a feed origin. Producers with no beta of their own share the World row's. The results are reported at the central betas, with percentiles and the standard deviation over the draws. FLMP's own errors aren't drawn: they're carried separately, scaled by the central extensification, for combining downstream.
+**Monte Carlo.** Each draw takes every beta estimate (each row of `data/beta_*.csv`, World rows included) from Normal(β, se), independently (with `shrinkage`, the shrunk β and se), and clips it if `clipping` is set. A beta gets the same draw everywhere it's used in that draw: on both sides of a scenario, in every scenario, and as a feed origin. Producers with no beta of their own share the World row's. The results are reported at the central betas, with percentiles and the standard deviation over the draws. FLMP's own errors aren't drawn: they're carried separately, scaled by the central extensification, for combining downstream.
 
 Options:
 - `replacement.comprehensive: false`: only C's own consumers replace the production (L[C] = S[C]).
@@ -106,6 +109,12 @@ Options:
   - `true` uses each country × item's `beta_{year}` and `se_{year}`. A producer with no beta of its own gets the item's World row. So does one whose row is the filter's unfitted prior (β 0.5, se 1000, where it had no data), as any row with an se above `MAX_BETA_SE` (100) is treated as missing.
   - `false` replaces every beta in those files with `extensification.value`, and every se with `extensification.std`, so each country × item still gets its own draw.
   - Animal items (`PASTURE_ITEMS` in `_leakage_funcs.py`) take their country's "All pasture-based animal products" row of `beta_animals.csv`. Where they have no pasture (pigs, poultry, eggs), they have no pasture beta and extensify only through their feed.
+- `extensification.shrinkage: true` (`shrink_betas` in `_leakage_funcs.py`): a beta far from its item's other countries' counts for less the larger its se. Empirical Bayes, with each country's true beta taken as drawn from Normal(μ, τ²) and its estimate from Normal(true beta, se²):
+  - For each item (the pasture row of `beta_animals.csv` is one), τ² is the DerSimonian-Laird estimate from its countries' betas. World rows are left as they are, and regional aggregates aren't used. Items with fewer than `MIN_SHRINKAGE_COUNTRIES` (5) countries take the median of the other items' τ². μ is the countries' mean weighted by 1 / (se² + τ²).
+  - Each beta keeps the weight B = τ² / (τ² + se²) and the rest goes to μ: β ← B·β + (1 − B)·μ, se² ← B·se² + (1 − B)²·var(μ).
+  - A well-estimated beta hardly moves (the UK's wheat, 0.59 ± 0.15, to 0.57), and a noisy outlier is pulled most of the way to μ (Saint Vincent's bananas, 2.65 ± 0.9, to 0.86). For the 2019 phys betas the median weight on a crop's own beta is about 0.8, and no beta is left above 2.
+  - The pasture betas scatter little more than their se's imply (τ about 0.02, around μ about 0), so they're all pulled close to 0, even fairly precise ones such as the USA's (0.23 ± 0.07, to 0.02).
+- `feed.max_ratio_to_median` (`cap_feed_rates` in `_leakage_funcs.py`): FLMP's feed allocation gives a few countries several times the plausible feed per kg, by the same factor for every animal product: e.g. for 2021, ~19x the median for Saint Vincent (54 kg per kg of chicken, mostly its bananas) and ~12x for Ghana (33, mostly sweet potatoes). FLMP carries no uncertainty for it. With a cap, each producer's feed per kg of each animal product is held to that multiple of the item's median over producers, weighted by their production, all its feed (each crop and origin) scaled down by the same factor. The animal product's own impacts are still its FLMP total less FLMP's (uncapped) feed. The capped producers are listed in the run folder's `feed_rate_caps.csv`; at 3x for 2021, 41 producers, the same ones for every animal product.
 
 ## Outputs (`{results_dir}/{run_name}/raw_outputs/`)
 
@@ -119,7 +128,7 @@ The results files go in the run folder's `raw_outputs/`, any inputs built for th
     - `land_use_m2`, `bd` (extinctions) and `ghg_coc_kgco2e` (one-off carbon opportunity cost), each with `_p{q}` percentiles and `_sd` over the draws;
     - `bd_err` and `ghg_coc_kgco2e_err`, FLMP's own errors scaled the same way;
     - `ghg_prod_kgco2e` and `_err`, production GHG of the location's `production_change_kg`, which isn't extensified.
-  - **Betas,** of the location as a producer of the item: `extensification` and `extensification_std` are its central beta and se. For animal products these are its pasture's, which are NaN where it has no pasture. `fallback_extensification` marks producers using the World row's beta, and `fallback_intensity` producers with no FLMP impacts, which get the item's production-weighted world average.
+  - **Betas,** of the location as a producer of the item: `extensification` and `extensification_std` are its central beta and se, as used (after any shrinkage and clipping), and `extensification_raw` its beta in the betas file. For animal products these are its pasture's, which are NaN where it has no pasture. `fallback_extensification` marks producers using the World row's beta, and `fallback_intensity` producers with no FLMP impacts, which get the item's production-weighted world average.
   - **Current state** of the location as a producer of the item, all FLMP for the run year:
     - `production_kg`;
     - `arable_m2_current` and `pasture_m2_current` (arable is feed land for animal products), and `land_use_current_m2`, their sum;
@@ -133,6 +142,11 @@ The results files go in the run folder's `raw_outputs/`, any inputs built for th
   - The linear impacts located there: arable and pasture land (m², always separate; pasture is 0 for crops, and arable for animal products is feed land), extinctions (`bd`) and carbon opportunity cost, with errors summed linearly, and production GHG at the location as a producer.
   - The extensified ones: `land_use_leakage_m2`, `bd_ext` and `ghg_coc_kgco2e_ext`.
 - `{ISO}_leakage_per_m2.csv` (with `outputs.per_m2`): the per-kg rows per m² of land spared by C (the linear arable + pasture per kg of its displaced rows, wherever that land is).
+- `draws/` (with `monte_carlo.save_draws`): at each size listed, what each country C spares and leaks at each location in each draw, for `land_use_m2`, `bd` and `ghg_coc_kgco2e`. The percentiles elsewhere are each value's own, and those of a sum can't be had from them; as the draws are the same for every item and size, sums of these, draw by draw, have their own.
+  - `portfolio_size{size}.npz`: per kg of C's production portfolio displaced, each item's per kg displaced weighted by C's production of it, over the items with extensified results for C, as in the analysis's portfolio matrix.
+  - `{item_code}_size{size}.npz`, for each item listed: per kg displaced.
+  - Each has `draws_{ISO}` for each C (spared, then leaked × the three metrics × locations × draws, float32, spared positive), the locations' `location_codes` and `location_isos` (every country in the trade matrix), `metrics`, `item_code` (0 for the portfolio), `size` and `size_unit`. `analysis/flow_matrices.py`'s `draws()` reads them.
 - In the run folder, not `raw_outputs/`:
   - `config.json`: the run's record (see Recreating a run).
   - `inputs/impacts_matrices/`: the matrix script's outputs, when `paths.impacts_dir` is `null`.
+  - `feed_rate_caps.csv`, with `feed.max_ratio_to_median`: one row per animal product x producer whose feed was capped, with FLMP's feed per kg (`flmp_kg_per_kg`), the item's median and the cap (all kg of feed per kg) and the factor its feed was scaled by. The results' `arable_m2_current` (feed land, for animal products) is still FLMP's, uncapped.

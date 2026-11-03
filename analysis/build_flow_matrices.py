@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Leakage flow matrices of a bd_leakage_ratios run, one file per item, from the run's
-raw outputs: `python build_flow_matrices.py [config.json] [--workers N]`, with the
-run's config (default: the repository's config.json) or its record, and N processes
-reading the files and building the items at once.
+raw outputs: `python build_flow_matrices.py [--config CONFIG] [--workers N]`, with
+the run's config (default: the repository's config.json) or its record, and N
+processes reading the files and building the items at once.
 
 For each displacement size, displacing country C (rows) and location (columns),
 from the rows of the {ISO}_leakage.csv files, per kg displaced in C: the
@@ -40,8 +40,8 @@ import flow_matrices
 from flow_matrices import EXTENSIFIED, METRICS
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("config", nargs="?", type=Path, default=_run_paths.DEFAULT_CONFIG,
-                    help="the run's config.json, or its record (default: the repository's config.json)")
+parser.add_argument("--config", type=Path, default=_run_paths.DEFAULT_CONFIG,
+                    help=_run_paths.CONFIG_HELP)
 parser.add_argument("--workers", type=int, default=1,
                     help="processes to read the files and build the items in at once (default: 1)")
 args = parser.parse_args()
@@ -99,11 +99,11 @@ def read_flows(path: Path) -> pd.DataFrame:
     sign = np.where(rows["replacement"], 1.0, -1.0)
     rows[METRICS] = rows[METRICS].mul(sign / displaced_kg, axis=0)
     replacement = rows["replacement"].to_numpy()[:, None]
-    for metric in EXTENSIFIED:
+    for metric in EXTENSIFIED if PERCENTILES else []:  # a run with no draws has no percentiles
         cols = [f"{metric}_{p}" for p in PERCENTILES]
         complement = [f"{metric}_{COMPLEMENT[p]}" if p in COMPLEMENT else None for p in PERCENTILES]
         flipped = np.column_stack([-rows[c].to_numpy() if c else np.full(len(rows), np.nan) for c in complement])
-        values = np.where(replacement, rows[cols].to_numpy(), flipped) if cols else np.empty((len(rows), 0))
+        values = np.where(replacement, rows[cols].to_numpy(), flipped)
         rows[cols] = (values / displaced_kg.to_numpy()[:, None]).astype(np.float32)
     return rows
 

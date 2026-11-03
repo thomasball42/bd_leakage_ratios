@@ -1,8 +1,10 @@
-Analysis of this repository's runs. Each script takes the run's config, the repository's `config.json` by default, or another config or a run's record as its first argument, and reads the run's `raw_outputs/` and writes to its `processed/` (both in `{results_dir}/{run_name}/`).
+Analysis of this repository's runs. Each script reads one run's `raw_outputs/` and writes to its `processed/`, both in the run folder `{results_dir}/{run_name}/`. The plots write to `{figs_dir}/{run_name}/`.
+
+The run is the one in the repository's `config.json` by default. To use another, such as an older run, give its run folder, the record in it (its `config.json`), or another config. Give it with `--config` to the build scripts and plots, and as the first argument to `country_attributes.py`, e.g. `python scratch/country_profile.py GBR --config /maps/tsb42/leakage_flows/bd_leakage_ratios_results/261027_clipB`. A run folder's results are read from that folder, even if it has been moved or renamed since the run; its figures are named after the folder.
 
 ## Flow matrices
 
-`python build_flow_matrices.py [config.json] [--workers N]` writes one file per item to `processed/flow_matrices/`, `{item_code}_{item}.npz`, listed in `items.csv`. With 24 workers it takes a few minutes. It checks each item against `leakage_summary.csv`: the rows of its spared, leaked and ratio matrices must sum to the summary's spared and leaked amounts and leakage ratios.
+`python build_flow_matrices.py [--config CONFIG] [--workers N]` writes one file per item to `processed/flow_matrices/`, `{item_code}_{item}.npz`, listed in `items.csv`. With 24 workers it takes a few minutes. It checks each item against `leakage_summary.csv`: the rows of its spared, leaked and ratio matrices must sum to the summary's spared and leaked amounts and leakage ratios.
 
 `flow_matrices.py` loads them:
 
@@ -32,6 +34,7 @@ Things to know:
 - **The C column** holds what changes in C: in `spared` C's own land, and in `per_kg` the land of the part of its displaced production C replaces itself (with `exclude_self: false`), which the run counts as leaked, and of any feed grown in C for the other replacing producers. `exclude_self=True` leaves the column out.
 - **Spared isn't all in C.** For animal products, C's lost production frees its feed land wherever that was grown, so `spared` has cells abroad, and `net` shows where the spared and leaked feed land offset.
 - **Ratios where little is spared.** Where C's beta is near 0 or negative (most pasture betas, and a few crops'), the spared amount is near 0 or negative, and the ratios are huge or change sign. `per_kg`, `net` and `share` don't have this problem.
+- **Draws.** With the run's `monte_carlo.save_draws`, `fm.draws(m, "GBR")` gives C's spared and leaked cells (`{metric}_spared`, `{metric}_leaked`) in each of the run's Monte Carlo draws, for the portfolio too, at the sizes saved. Sums of them over locations or items, draw by draw, have their own percentiles, which sums of the cells' percentiles don't.
 - **Percentiles** are there for the `per_kg` and `spared` cells. The `ratio`, `share` and `net` cells have none, as they combine values whose draws aren't in the raw outputs; their rows' sums do (`leakage_ratio`). So do the `per_kg` and `spared` rows' sums, what C leaks and spares in all (`totals`), whose percentiles are their own, from the run's summary: summing the cells' percentiles wouldn't give them.
 - **Size.** The smallest size is the marginal case. Larger ones change both the ratios and the shares, as each source's land responds to its own relative change.
 
@@ -39,7 +42,7 @@ Each file also has `replaced_share` (the share of C's production each location r
 
 ## Portfolio matrix
 
-`python build_portfolio_matrices.py [config.json]`, once the flow matrices are built, writes `processed/flow_matrices/portfolio.npz`, in under a minute. It holds the same matrices, but per kg of each country's production portfolio displaced. Each row is C's row of every item it produces, weighted by C's FLMP production of the item:
+`python build_portfolio_matrices.py [--config CONFIG]`, once the flow matrices are built, writes `processed/flow_matrices/portfolio.npz`, in under a minute. It holds the same matrices, but per kg of each country's production portfolio displaced. Each row is C's row of every item it produces, weighted by C's FLMP production of the item:
 
 P[size, C, location] = Σᵢ Qᵢ(C) · Mᵢ[size, C, location] / Σᵢ Qᵢ(C)
 

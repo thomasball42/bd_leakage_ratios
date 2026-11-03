@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 The portfolio flow matrix of a bd_leakage_ratios run, from its items' flow
-matrices: `python build_portfolio_matrices.py [config.json]`, with the run's config
-(default: the repository's config.json) or its record, once build_flow_matrices.py
-has written them.
+matrices: `python build_portfolio_matrices.py [--config CONFIG]`, with the run's
+config (default: the repository's config.json) or its record, once
+build_flow_matrices.py has written them.
 
 Each displacing country C's row is per kg of its production portfolio displaced:
 its row of every item it produces, weighted by its FLMP production of the item,
@@ -44,8 +44,8 @@ import flow_matrices
 from flow_matrices import EXTENSIFIED, METRICS
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("config", nargs="?", type=Path, default=_run_paths.DEFAULT_CONFIG,
-                    help="the run's config.json, or its record (default: the repository's config.json)")
+parser.add_argument("--config", type=Path, default=_run_paths.DEFAULT_CONFIG,
+                    help=_run_paths.CONFIG_HELP)
 args = parser.parse_args()
 
 config, RAW_DIR, PROCESSED_DIR, DATA_DIR = _run_paths.run_paths(args.config)

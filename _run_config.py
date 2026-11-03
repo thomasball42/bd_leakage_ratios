@@ -21,15 +21,24 @@ REPO_DIR = Path(__file__).resolve().parent
 RECORD_KEY = "provenance"  # the section a run's record adds to its config
 RAW_OUTPUTS = "raw_outputs"  # the run folder's subfolder for the results files; the record stays in the run folder
 INPUTS = "inputs"  # the run folder's subfolder for inputs built for the run (impacts_matrices/)
+DRAWS = "draws"  # raw_outputs' subfolder for the draws saved with monte_carlo.save_draws
 # every setting, by group (see the README); a config must have exactly these
 SETTINGS = {
     "run": ["run_name", "year", "countries"],
     "paths": ["flmp_results_dir", "results_dir", "impacts_dir", "data_dir", "figs_dir"],
     "displacement": ["unit", "sizes", "sizes_dist", "sizes_n", "sizes_range"],
     "replacement": ["comprehensive", "exclude_self"],
-    "extensification": ["use_beta", "beta_year", "beta_files", "value", "std", "clipping"],
-    "monte_carlo": ["draws", "seed", "percentiles"],
+    "extensification": ["use_beta", "beta_year", "beta_files", "value", "std", "clipping", "shrinkage"],
+    "feed": ["max_ratio_to_median"],
+    "monte_carlo": ["draws", "seed", "percentiles", "save_draws"],
     "outputs": ["per_kg", "per_m2"],
+}
+# settings added since the first runs, with the values that keep those runs' behaviour: a config (or a run's
+# record) without them gets these
+DEFAULTS = {
+    "extensification": {"shrinkage": False},
+    "feed": {"max_ratio_to_median": None},
+    "monte_carlo": {"save_draws": None},
 }
 PACKAGES = ["numpy", "pandas", "tqdm"]
 MAX_UNTRACKED_BYTES = 1 << 20  # untracked files up to this size go in the record's patch, bigger ones are only listed
@@ -40,8 +49,9 @@ def load(path: Path) -> dict:
     provenance is checked against the current repository and otherwise ignored."""
     config = json.loads(Path(path).read_text())
     record = config.pop(RECORD_KEY, None)
+    with_defaults(config)
 
-    problems = [f"{group!r} missing" for group in SETTINGS if group not in config]
+    problems =[f"{group!r} missing" for group in SETTINGS if group not in config]
     problems += [f"{group!r} isn't a setting group" for group in config if group not in SETTINGS]
     for group, keys in SETTINGS.items():
         given = config.get(group, {})
@@ -82,6 +92,23 @@ def load(path: Path) -> dict:
         problems.append(f"monte_carlo.seed must be a whole number, not {seed!r}")
     if not isinstance(percentiles, list) or not all(number(q) and 0 <= q <= 100 for q in percentiles):
         problems.append(f"monte_carlo.percentiles must be a list of numbers from 0 to 100, not {percentiles!r}")
+    save_draws = config["monte_carlo"]["save_draws"]
+    if save_draws is not None:
+        if (not isinstance(save_draws, dict) or set(save_draws) != {"sizes", "items"}
+                or not isinstance(save_draws["sizes"], list)
+                or not all(number(s) and s > 0 for s in save_draws["sizes"])
+                or not isinstance(save_draws["items"], list)
+                or not all(isinstance(item, int) and not isinstance(item, bool) for item in save_draws["items"])):
+            problems.append("monte_carlo.save_draws must be null, or the sizes and item codes to save the draws of, "
+                            f'e.g. {{"sizes": [0.0001], "items": [867]}}, not {save_draws!r}')
+        elif draws == 0:
+            problems.append("monte_carlo.save_draws needs monte_carlo.draws above 0")
+    shrinkage = config["extensification"]["shrinkage"]
+    if not isinstance(shrinkage, bool):
+        problems.append(f"extensification.shrinkage must be true or false, not {shrinkage!r}")
+    max_ratio = config["feed"]["max_ratio_to_median"]
+    if max_ratio is not None and not (number(max_ratio) and max_ratio > 1):
+        problems.append(f"feed.max_ratio_to_median must be a number above 1, or null for no cap, not {max_ratio!r}")
     for key in SETTINGS["outputs"]:
         if not isinstance(config["outputs"][key], bool):
             problems.append(f"outputs.{key} must be true or false, not {config['outputs'][key]!r}")
@@ -99,6 +126,21 @@ def load(path: Path) -> dict:
     return config
 
 
+def with_defaults(config: dict) -> dict:
+    """Fill in any DEFAULTS settings `config` doesn't have, in place, and return it."""
+    for group, defaults in DEFAULTS.items():
+        given = config.setdefault(group, {})
+        if isinstance(given, dict):
+            for key, value in defaults.items():
+                given.setdefault(key, value)
+    return config
+
+
+def draws_file(name: str | int, size: float) -> str:
+    """The file in raw_outputs/DRAWS of the draws saved for the portfolio ("portfolio") or an item code at `size`."""
+    return f"{name}_size{size:.6g}.npz"
+
+
 def resolve(path: str | None) -> Path | None:
     """A config path, relative ones taken from the repository folder."""
     return None if path is None else REPO_DIR / path
@@ -112,7 +154,7 @@ def check_run_dir(config: dict, run_dir: Path) -> None:
         return
     previous = json.loads(record_path.read_text())
     previous.pop(RECORD_KEY, None)
-    if previous != config:
+    if with_defaults(previous) != config:
         raise ValueError(f"{run_dir} already holds a run with different settings (see {record_path}); "
                          f"use another run_name, or delete that folder")
 

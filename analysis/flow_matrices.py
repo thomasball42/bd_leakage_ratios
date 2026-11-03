@@ -37,8 +37,10 @@ of it.
 spared. The ratio, share and net cells have none, as they combine values whose
 draws aren't in the raw outputs; their rows' sums, the leakage ratios, do
 (leakage_ratio). So do the per_kg and spared rows' sums, what C leaks and spares
-in all (totals), whose percentiles, unlike sums of the cells', are their own. m["replaced_share"] is the share of C's displaced production that
-each location replaces as a producer, the same at every size; frame() labels it,
+in all (totals), whose percentiles, unlike sums of the cells', are their own. Where
+the run saved them (its monte_carlo.save_draws), draws() gives a country's spared and
+leaked cells in each draw, so any sum of them has its own percentiles too.
+m["replaced_share"] is the share of C's displaced production that each location replaces as a producer, the same at every size; frame() labels it,
 or any other countries x locations array.
 
 load("portfolio") gives the portfolio matrix written by build_portfolio_matrices.py,
@@ -46,6 +48,7 @@ in the same form: each country's row per kg of its production portfolio displace
 its row of each item it produces weighted by its production of the item, so a
 country that produces only wheat has the wheat matrix's row. It has the leakage
 ratios, but no percentiles; its weights and covered_share are documented there.
+draws() works on it, where the run saved its draws.
 """
 
 from pathlib import Path
@@ -151,6 +154,38 @@ def matrix(m: dict, metric: str, kind: str = "ratio", size: float | None = None,
     displacement size nearest `size` (default: the smallest), central or at a
     `percentile`."""
     return frame(m, cube(m, metric, kind, exclude_self, percentile)[size_index(m, size)])
+
+
+def draws(m: dict, iso: str, size: float | None = None,
+          config_path: Path = _run_paths.DEFAULT_CONFIG) -> dict[str, np.ndarray]:
+    """What the displacing country `iso` spares and leaks at each of m's locations,
+    per kg displaced, in each of the run's Monte Carlo draws, at the run's size
+    nearest `size` (default: the smallest): {f"{metric}_spared": ...,
+    f"{metric}_leaked": ...}, each (locations x draws), for the EXTENSIFIED metrics.
+    The run saves them only for the portfolio and the items, and at the sizes, in
+    its monte_carlo.save_draws. The draws are the same for every item and size, so
+    sums of them over locations or items, draw by draw, have their own percentiles,
+    which sums of the cells' percentiles don't."""
+    s = m["sizes"][size_index(m, size)]
+    name = PORTFOLIO if int(m["item_code"]) == 0 else int(m["item_code"])
+    path = (_run_paths.run_paths(config_path)[1] / _run_paths._run_config.DRAWS
+            / _run_paths._run_config.draws_file(name, s))
+    if not path.exists():
+        raise FileNotFoundError(f"No draws saved for {name} at size {s:g} ({path}): the run saves them for the "
+                                "portfolio and the items, at the sizes, in its monte_carlo.save_draws")
+    with np.load(path) as f:
+        if f"draws_{iso}" not in f.files:
+            raise KeyError(f"No draws of {iso} in {path}")
+        values, codes, metrics = f[f"draws_{iso}"], f["location_codes"], list(f["metrics"])
+    at = np.searchsorted(codes, m["locations"])
+    if not np.array_equal(codes[np.minimum(at, len(codes) - 1)], m["locations"]):
+        raise ValueError(f"{path}'s locations don't include all the flow matrices'")
+    elsewhere = np.ones(len(codes), bool)
+    elsewhere[at] = False
+    if np.nan_to_num(values[:, :, elsewhere]).any():
+        raise ValueError(f"{path} has draws at locations the flow matrices don't have")
+    return {f"{metric}_{kind}": values[k, j, at].astype(np.float64)
+            for j, metric in enumerate(metrics) for k, kind in enumerate(["spared", "leaked"])}
 
 
 def leakage_ratio(m: dict, metric: str, size: float | None = None) -> pd.DataFrame:

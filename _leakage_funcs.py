@@ -18,7 +18,8 @@ its feed crops where grown - goes through leakage_land_use with that source's
 FLMP production and land and its beta, after netting the changes at each source
 within C's scenario. The results are located where each source is, so feed land
 counts where the feed is grown, not where the animal product is. The betas' uncertainty is carried by Monte Carlo: each draw
-takes every beta estimate from Normal(beta, se) (see draw_betas).
+takes every beta estimate from Normal(beta, se) (see draw_betas), after shrinking each country's towards its item's mean
+over countries if asked (see shrink_betas). Implausible feed rates can be capped first (see cap_feed_rates).
 """
 from pathlib import Path
 
@@ -53,6 +54,9 @@ DRAW_BATCH_BYTES = 2e8  # memory for each batch of draws in evaluate_extensified
 # where the betas' filter had no data it leaves its prior (beta 0.5, se 1000): a beta row with an se above this is
 # treated as none, as drawing from it gives betas in the thousands (the largest fitted se is about 3)
 MAX_BETA_SE = 100
+# items with betas for fewer countries than this take the median between-country variance of the other items' betas
+# in shrink_betas, as their own is too poorly estimated
+MIN_SHRINKAGE_COUNTRIES = 5
 
 
 def load_country_isos(data_dir: Path) -> dict[int, str]:
@@ -188,19 +192,22 @@ def pasture_based_production(intensities: dict[int, tuple[np.ndarray, np.ndarray
 
 def load_extensification(use_beta: bool, value: float | None, std: float | None, data_dir: Path,
                          beta_files: dict[str, str], year: int, codes: np.ndarray, items: list[int],
-                         intensities: dict[int, tuple[np.ndarray, np.ndarray]],
-                         ) -> tuple[np.ndarray, np.ndarray, dict[int, tuple[np.ndarray, np.ndarray]]]:
+                         intensities: dict[int, tuple[np.ndarray, np.ndarray]], shrinkage: bool = False,
+                         ) -> tuple[np.ndarray, np.ndarray, dict[int, tuple[np.ndarray, np.ndarray]], np.ndarray]:
     """The beta estimates, and which one each producer of each item uses.
 
     The estimates are the rows of the "crops" and "animals" `beta_files` in
     data_dir (beta_crops.csv and beta_animals.csv by default) for the countries in
     `codes` and the World, with beta_{year} and se_{year} for the betas' `year` if
     `use_beta`, or otherwise `value` and `std` in place of every row's. Rows with
-    an se above MAX_BETA_SE are left out, as unfitted.
+    an se above MAX_BETA_SE are left out, as unfitted. With `shrinkage` (and
+    `use_beta`), each country's beta and se are shrunk towards its item's mean
+    over countries (see shrink_betas).
     Returns each estimate's central beta and standard deviation,
-    as arrays with a NaN appended (so estimate -1, none, gives NaN), and per item
+    as arrays with a NaN appended (so estimate -1, none, gives NaN), per item
     each producer's estimate on the `codes` index and a mask of the producers
-    that use the item's World row as they have none of their own.
+    that use the item's World row as they have none of their own, and each
+    estimate's central beta before any shrinkage, with a NaN appended.
 
     PASTURE_ITEMS use their country's "All pasture-based animal products" row
     (Item Code 0 of the animals file), except where they have no pasture
@@ -230,6 +237,9 @@ def load_extensification(use_beta: bool, value: float | None, std: float | None,
     beta_hat = betas[beta_col].to_numpy(float) if use_beta else np.full(len(betas), float(value))
     beta_se = betas[se_col].to_numpy(float) if use_beta else np.full(len(betas), float(std))
     usable = np.isfinite(beta_hat) & ~unfitted
+    beta_raw = beta_hat
+    if use_beta and shrinkage:
+        beta_hat, beta_se = shrink_betas(betas, beta_hat, beta_se, usable)
 
     pasture = VALUE_COLS.index("pasture_m2")
     estimates = {}
@@ -250,16 +260,67 @@ def load_extensification(use_beta: bool, value: float | None, std: float | None,
             idx[no_pasture] = -1
             fallback[no_pasture] = False
         estimates[item] = (idx, fallback)
-    return np.append(beta_hat, np.nan), np.append(beta_se, np.nan), estimates
+    return np.append(beta_hat, np.nan), np.append(beta_se, np.nan), estimates, np.append(beta_raw, np.nan)
+
+
+def shrink_betas(betas: pd.DataFrame, beta_hat: np.ndarray, beta_se: np.ndarray, usable: np.ndarray
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    """Shrink each country's beta towards its item's mean over countries, by how
+    uncertain it is: empirical Bayes, under a random-effects model in which each
+    country's true beta is drawn from Normal(mu, tau^2) and its estimate from
+    Normal(true beta, se^2).
+
+    For each item (Item Code) of the `usable` country rows of `betas` (World rows
+    and rows with no se are left as they are), tau^2 is the DerSimonian-Laird
+    estimate from its countries' betas, or for items with fewer than
+    MIN_SHRINKAGE_COUNTRIES countries the median of the other items'; mu is their
+    mean weighted by 1 / (se^2 + tau^2). Each beta then gets the weight
+    B = tau^2 / (tau^2 + se^2), and the rest goes to mu:
+        beta <- B * beta + (1 - B) * mu
+        se^2 <- B * se^2 + (1 - B)^2 * var(mu)
+    So a beta far from its item's others counts for less the larger its se: a
+    well-estimated one hardly moves, and a noisy outlier is pulled most of the way
+    to mu. Returns the shrunk betas and standard errors, over the rows of `betas`.
+    """
+    items = betas["Item Code"].to_numpy()
+    country = usable & (betas["Area Code"].to_numpy() != WORLD_CODE) & (beta_se > 0)
+    groups = {item: np.flatnonzero(country & (items == item)) for item in np.unique(items[country])}
+
+    def dersimonian_laird(rows):
+        y, w = beta_hat[rows], beta_se[rows] ** -2.0
+        mean = (w * y).sum() / w.sum()
+        q = (w * (y - mean) ** 2).sum()
+        return max(0.0, (q - (len(rows) - 1)) / (w.sum() - (w ** 2).sum() / w.sum()))
+
+    tau2 = {item: dersimonian_laird(rows) for item, rows in groups.items() if len(rows) >= MIN_SHRINKAGE_COUNTRIES}
+    pooled = float(np.median(list(tau2.values()))) if tau2 else 0.0
+    shrunk, shrunk_se, own_weight = beta_hat.copy(), beta_se.copy(), np.full(len(beta_hat), np.nan)
+    for item, rows in groups.items():
+        t2, v = tau2.get(item, pooled), beta_se[rows] ** 2
+        w = 1 / (v + t2)
+        mu = (w * beta_hat[rows]).sum() / w.sum()
+        own_weight[rows] = weight = t2 / (t2 + v)
+        shrunk[rows] = weight * beta_hat[rows] + (1 - weight) * mu
+        shrunk_se[rows] = np.sqrt(weight * v + (1 - weight) ** 2 / w.sum())
+
+    moved = np.where(country, np.abs(shrunk - beta_hat), 0)
+    largest = np.argsort(-moved)[:5]
+    print(f"Shrunk {country.sum()} country betas towards their items' means, with a median weight of "
+          f"{np.median(own_weight[country]):.2f} on their own; {(moved > 0.5).sum()} moved by more than 0.5, the most "
+          "(Area Code, Item Code: beta -> shrunk) "
+          + ", ".join(f"{betas['Area Code'].iat[i]}, {items[i]}: {beta_hat[i]:.3g} -> {shrunk[i]:.3g}" for i in largest))
+    return shrunk, shrunk_se
 
 
 def draw_betas(beta_hat: np.ndarray, beta_se: np.ndarray, clipping: tuple[float | None, float | None] | None,
-               draws: int, seed: int) -> dict[str, np.ndarray | None]:
+               draws: int, seed: int, beta_raw: np.ndarray | None = None) -> dict[str, np.ndarray | None]:
     """The central betas, and `draws` sets of betas each drawn from
     Normal(beta_hat, beta_se), every estimate independently, from `seed`; both
     clipped to `clipping` ((lower, upper), either None for no bound; None for no
-    clipping). Returns "central" (estimates), "se" (estimates) and "draws"
-    (draws x estimates, or None), over the estimates from load_extensification.
+    clipping). Returns "central" (estimates), "se" (estimates), "draws"
+    (draws x estimates, or None) and "raw", the estimates' betas before any
+    shrinkage and clipping (`beta_raw`, or beta_hat where that's None), over the
+    estimates from load_extensification.
     The same draws serve every item and displacement size.
     """
     lower, upper = (None, None) if clipping is None else clipping
@@ -270,7 +331,8 @@ def draw_betas(beta_hat: np.ndarray, beta_se: np.ndarray, clipping: tuple[float 
         return beta if lower is None and upper is None else np.clip(beta, lower, upper)
 
     z = np.random.default_rng(seed).standard_normal((draws, len(beta_hat))) if draws else None
-    return {"central": clip(beta_hat), "se": beta_se, "draws": clip(beta_hat + beta_se * z) if draws else None}
+    return {"central": clip(beta_hat), "se": beta_se, "draws": clip(beta_hat + beta_se * z) if draws else None,
+            "raw": beta_hat if beta_raw is None else beta_raw}
 
 
 def load_feed_mix(path: Path, codes: np.ndarray) -> dict[int, pd.DataFrame]:
@@ -297,6 +359,48 @@ def load_feed_mix(path: Path, codes: np.ndarray) -> dict[int, pd.DataFrame]:
     }
 
 
+def weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
+    """The (lower) median of `values` weighted by `weights`."""
+    order = np.argsort(values)
+    cumulative = np.cumsum(weights[order])
+    return float(values[order][np.searchsorted(cumulative, cumulative[-1] / 2)])
+
+
+def cap_feed_rates(feed_mix: dict[int, pd.DataFrame], production: dict[int, np.ndarray], max_ratio: float
+                   ) -> tuple[dict[int, pd.DataFrame], pd.DataFrame]:
+    """Cap each producer's feed per kg of each animal product at `max_ratio` times
+    the item's median over producers, weighted by their production (kg, on the
+    codes index), scaling all of a capped producer's feed (each crop and origin)
+    down by the same factor.
+
+    FLMP's feed allocation gives a few countries several times the feed per kg
+    that's plausible, by the same factor for every animal product (e.g. ~19x the
+    median for Saint Vincent, mostly its bananas, and ~12x for Ghana, mostly its
+    sweet potatoes), and FLMP carries no uncertainty for it.
+
+    Returns the load_feed_mix tables with feed_kg_per_kg capped and FLMP's kept as
+    feed_kg_per_kg_flmp, and one row per capped item x producer (producer_idx)
+    with FLMP's feed per kg, the item's median and the cap (all in kg per kg) and
+    the factor its feed was scaled by.
+    """
+    capped, caps = {}, []
+    for item, mix in feed_mix.items():
+        capped[item] = mix = mix.assign(feed_kg_per_kg_flmp=mix["feed_kg_per_kg"])
+        totals = mix.groupby("producer_idx")["feed_kg_per_kg"].sum()
+        weights = np.nan_to_num(production[item][totals.index.to_numpy()]) if item in production else None
+        if weights is None or weights.sum() <= 0:  # no production to take the median over
+            continue
+        median = weighted_median(totals.to_numpy(), weights)
+        scale = np.minimum(1, max_ratio * median / totals)
+        mix["feed_kg_per_kg"] *= mix["producer_idx"].map(scale).to_numpy()
+        over = scale < 1
+        caps.append(pd.DataFrame({"ItemT_Code": item, "producer_idx": totals.index[over],
+                                  "flmp_kg_per_kg": totals[over].to_numpy(), "median_kg_per_kg": median,
+                                  "cap_kg_per_kg": max_ratio * median, "scale": scale[over].to_numpy()}))
+    columns = ["ItemT_Code", "producer_idx", "flmp_kg_per_kg", "median_kg_per_kg", "cap_kg_per_kg", "scale"]
+    return capped, pd.concat(caps, ignore_index=True) if caps else pd.DataFrame(columns=columns)
+
+
 def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]], production: dict[int, np.ndarray],
                  pasture_based: np.ndarray, estimates: dict[int, tuple[np.ndarray, np.ndarray]],
                  feed_mix: dict[int, pd.DataFrame]) -> pd.DataFrame:
@@ -314,7 +418,8 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
     so its land is its own pasture per kg times that. Feed is priced with each
     crop's impacts where it was grown, as in prod_impacts_long, so an animal
     product's own impacts (and errors, summed linearly) are its total less its
-    feed's.
+    feed's. Where cap_feed_rates has capped its feed, that's FLMP's feed
+    (feed_kg_per_kg_flmp), and the feed sources have the capped feed.
     """
     arable, pasture = VALUE_COLS.index("arable_m2"), VALUE_COLS.index("pasture_m2")
     scaled = [VALUE_COLS.index(col) for col in SCALED]
@@ -337,16 +442,19 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
     if item not in feed_mix:
         return own
 
-    feed_sources = []
+    feed_sources, flmp_feed = [], []
     for feed_item, g in feed_mix[item].groupby("feed_item"):
         origin = g["origin_idx"].to_numpy()
         kg = g["feed_kg_per_kg"].to_numpy()
+        kg_flmp = g["feed_kg_per_kg_flmp"].to_numpy() if "feed_kg_per_kg_flmp" in g else kg
         crop_production = production[feed_item][origin] if feed_item in production else np.full(len(g), np.nan)
         if feed_item in intensities:
             per_kg = intensities[feed_item][0][origin]
             land_per_kg, impacts = per_kg[:, arable], kg[:, None] * per_kg[:, scaled]
+            flmp_impacts = kg_flmp[:, None] * per_kg[:, scaled]
         else:  # unpriced in prod_impacts_long too
             land_per_kg, impacts = np.full(len(g), np.nan), np.zeros((len(g), len(scaled)))
+            flmp_impacts = impacts
         source = pd.DataFrame({
             "producer_idx": g["producer_idx"].to_numpy(),
             "source_item": feed_item,
@@ -359,8 +467,9 @@ def land_sources(item: int, intensities: dict[int, tuple[np.ndarray, np.ndarray]
         })
         source[SCALED] = impacts
         feed_sources.append(source)
+        flmp_feed.append(pd.DataFrame(flmp_impacts, columns=SCALED).assign(producer_idx=g["producer_idx"].to_numpy()))
     feed_sources = pd.concat(feed_sources, ignore_index=True)
-    feed_impacts = feed_sources.groupby("producer_idx")[SCALED].sum()
+    feed_impacts = pd.concat(flmp_feed, ignore_index=True).groupby("producer_idx")[SCALED].sum()
     own[SCALED] -= feed_impacts.reindex(own["producer_idx"], fill_value=0).to_numpy()
     return pd.concat([own, feed_sources], ignore_index=True)
 
@@ -558,7 +667,8 @@ def _add_spread(table: pd.DataFrame, name: str, central: np.ndarray, draws: np.n
 def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray, coi_idx: np.ndarray,
                      sources: pd.DataFrame, displaced_kg: np.ndarray, estimates: tuple[np.ndarray, np.ndarray],
                      betas: dict, percentiles: list[float], production: np.ndarray,
-                     pasture_based: np.ndarray | None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                     pasture_based: np.ndarray | None
+                     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, np.ndarray | None]:
     """Leakage of displacing `displaced_kg` (one per country of interest) of the
     item in each country of interest at `coi_idx`, given L, its per-kg
     `intensity` and its fallback mask, its land_sources, each producer's beta
@@ -566,7 +676,8 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
     and its FLMP `production` (kg) and, for animal products, each producer's
     `pasture_based` production, all on the codes index.
 
-    Returns three tables, each with coi_idx (and the first two location_idx):
+    Returns three tables, each with coi_idx (and the first two location_idx), and
+    the draws:
     - main: for each country of interest C, one 'displaced' row for each location
       where C's lost production had its land (C itself, and for an animal product
       the origins of its feed), and one 'replacement' row for each location where
@@ -576,15 +687,17 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
       the extensified land use and LAND_DRIVEN impacts located there (central,
       plus percentiles and sd over the draws) and their FLMP errors; production
       GHG of its production change (linear); and its extensification factor (its
-      pasture's, for an animal product) and current FLMP production and land for
-      the item;
+      pasture's, for an animal product), as used and as in the betas files, and
+      current FLMP production and land for the item;
     - per_kg: the same rows per kg displaced, with the linear impacts located
       there (the per-kg output);
     - summary: per country of interest, for each EXTENSIFIED result, the amount
       spared (minus its displaced rows' sum), leaked (its replacement rows' sum),
       the net leakage (leaked - spared) and their ratio, each central plus
       percentiles and sd, and production GHG spared and leaked, with its current
-      state.
+      state;
+    - draws: main's EXTENSIFIED results in each draw (EXTENSIFIED x main's rows x
+      draws, float32), or None with no draws.
     """
     scenario, producer, share, replacement = replacement_rows(L, coi_idx)
     kg = share * displaced_kg[scenario]
@@ -623,6 +736,7 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
     main["ghg_prod_kgco2e_err"] = np.abs(production_change * intensity[location, col("ghg_prod_kgco2e_err")])
     main["extensification"] = betas["central"][estimate[location]]
     main["extensification_std"] = betas["se"][estimate[location]]
+    main["extensification_raw"] = betas["raw"][estimate[location]]  # before shrinkage and clipping
     main["fallback_intensity"] = fallback[location]
     main["fallback_extensification"] = ext_fallback[location]
     main["production_kg"] = current_production
@@ -693,7 +807,25 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
     summary["replaced_share"] = np.bincount(scenario[replacement], share[replacement], minlength=len(coi_idx))
     summary["fallback_share"] = np.bincount(scenario[replacement], (share * fallback[producer])[replacement],
                                             minlength=len(coi_idx))
-    return main, per_kg, summary
+    return main, per_kg, summary, draws
+
+
+def add_draws(totals: np.ndarray, draws: np.ndarray, position: np.ndarray, location: np.ndarray,
+              replacement: np.ndarray, scale: np.ndarray, chunk: int = 10_000) -> None:
+    """Add an item's draws from leakage_for_item (EXTENSIFIED x rows x draws) to
+    `totals`, what each country of interest spares and leaks at each location in
+    each draw (countries of interest x 2 (spared, leaked) x locations x
+    EXTENSIFIED x draws), each row times its `scale` (0 or NaN to leave it out),
+    and a displaced row's negated, as what's spared is positive. A row's country
+    of interest is at `position` on totals' first axis, its location at
+    `location` (on the codes index), and `replacement` is its flow."""
+    rows = np.flatnonzero(np.isfinite(scale) & (scale != 0))
+    for start in range(0, len(rows), chunk):  # in chunks, to bound the memory
+        r = rows[start:start + chunk]
+        signed = np.where(replacement[r], scale[r], -scale[r]).astype(np.float32)
+        # each row is a different country of interest x flow x location, so none adds to a cell twice
+        totals[position[r], replacement[r].astype(int), location[r]] += (draws[:, r].transpose(1, 0, 2)
+                                                                         * signed[:, None, None])
 
 
 def per_m2_of_spared_land(per_kg: pd.DataFrame) -> pd.DataFrame:
