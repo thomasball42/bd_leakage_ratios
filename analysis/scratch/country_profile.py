@@ -4,9 +4,9 @@ Where the impacts of one country's displaced production go, at one displacement
 size: `python country_profile.py [ISO ...] [--item ITEM] [--size S] [--top N] [--metrics M ...]
 [--groups region|income] [--drop-ungrouped] [--uncertainty [--percentiles LO HI]]
 [--global-net separate|together] [--config CONFIG]`
-(default: GBR BRA, the production portfolio, the smallest size, land use, extinctions and carbon
+(default: GBR BRA, the production portfolio, size 1, land use, extinctions and carbon
 opportunity cost, by country). Three figures per country C (two with --global-net together), with a
-panel per metric:
+panel per metric, in the scratch figures' profiles/ folder:
 
   profile_{ISO}_{item}_bars.png
     For each metric, what's spared (left, blue) and leaked (right, orange) at
@@ -64,7 +64,7 @@ pf, fm, plt = c.pf, c.fm, c.plt
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("countries", nargs="*", default=["GBR", "BRA"], help="ISO3 codes (default: GBR BRA)")
 parser.add_argument("--item", default=fm.PORTFOLIO, help="an item code or name, or portfolio (default)")
-parser.add_argument("--size", type=float, default=None, help="the displacement size (default: the smallest)")
+parser.add_argument("--size", type=float, default=1, help="the displacement size, the run's nearest (default: 1)")
 parser.add_argument("--top", type=int, default=12,
                     help="the locations abroad shown in the bars, or groups with --groups (default: 12)")
 parser.add_argument("--metrics", nargs="+", choices=fm.METRICS, default=c.METRICS, metavar="M",
@@ -374,7 +374,7 @@ for iso in args.countries:
         else:
             ax.set_xlabel(x_label(k, power), color=pf.INK_2, fontsize=8)
     fig.legend(ncol=len(entries) if fits else 2, bbox_to_anchor=(1.74 / width, 1 - head / height), **legend)
-    c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_bars.png", args.config)
+    c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_bars.png", args.config, folder=c.PROFILES)
 
     if not together:
         # the net global effect on its own, lined up with the bars: their width, labels' column, panels, fonts and
@@ -397,7 +397,7 @@ for iso in args.countries:
             # just over the net, however tall it is
             ax.set_title(c.SHORT[k], color=pf.INK, fontsize=10, loc="left",
                          pad=7 + note.get_window_extent(renderer).height * 72 / fig.dpi)
-        c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_neteffect.png", args.config)
+        c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_neteffect.png", args.config, folder=c.PROFILES)
 
     # the shares: of the production that replaces C's, against of the impact that leaks, per location (or group)
     unit_noun = noun if args.groups else "location"
@@ -447,4 +447,4 @@ for iso in args.countries:
             ax.text(0.98, 0.02, "not shown: " + ",\nand ".join(notes), transform=ax.transAxes, ha="right",
                     va="bottom", fontsize=7, color=pf.INK_2)
     axes[0].set_ylabel("Share of the impact leaked", color=pf.INK_2, fontsize=8.5)
-    c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_shares.png", args.config)
+    c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_shares.png", args.config, folder=c.PROFILES)

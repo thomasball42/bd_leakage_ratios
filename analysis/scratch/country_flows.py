@@ -2,7 +2,7 @@
 """
 Leakage between countries, at one displacement size: `python country_flows.py [--top N] [--include ISO ...]
 [--metric M] [--item ITEM] [--size S] [--config CONFIG]` (default: the 30 countries with the most impact
-crossing their borders, extinctions, the production portfolio, the smallest size).
+crossing their borders, extinctions, the production portfolio, size 1).
 
 group_flows.py's three panels, one figure each, with countries in place of
 groups, each country's row weighted by its production, as if every country
@@ -42,7 +42,7 @@ parser.add_argument("--top", type=int, default=30, help="the countries shown, or
 parser.add_argument("--include", nargs="*", default=[], help="ISO3 codes to show as well as the top N")
 parser.add_argument("--metric", choices=fm.METRICS, default="bd", help="(default: bd)")
 parser.add_argument("--item", default=fm.PORTFOLIO, help="an item code or name, or portfolio (default)")
-parser.add_argument("--size", type=float, default=None, help="the displacement size (default: the smallest)")
+parser.add_argument("--size", type=float, default=1, help="the displacement size, the run's nearest (default: 1)")
 parser.add_argument("--config", type=Path, default=c._run_paths.DEFAULT_CONFIG, help=c._run_paths.CONFIG_HELP)
 args = parser.parse_args()
 
@@ -173,4 +173,4 @@ for key, (title, unit) in c.FLOW_PANELS.items():
              "scenario. Ordered by World Bank region, then GDP per capita. Leakage includes what each country "
              "replaces itself.", color=pf.INK_2, fontsize=8.5, va="top", linespacing=1.5)
     c.save(fig, f"country_flows_{key}_{f'top{args.top}' if args.top else 'all'}_{c.stem(m)}_{args.metric}"
-                f"_size{m['sizes'][i]:.3g}.png", args.config)
+                f"_size{m['sizes'][i]:.3g}.png", args.config, folder=c.FLOWS)

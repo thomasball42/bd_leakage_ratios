@@ -1,5 +1,8 @@
-Calcultes market leakage of displaced agricultural production: when a country produces less of an item, how much land, biodiversity and GHG impact moves to the countries that replace it. Uses 'extensification factors' - elasticities between production and farmed area for each commodity, to estimate the extent to which foregone production motivates the clearing of new agricultural land (and consequently has high impacts in LIFE and carbon, etc) in the places that production is displaced to. 
-- Thomas S Ball, 20-10-2026
+Calcultes market leakage of displaced agricultural production: when a country produces less of an item (for *some* reason..), how much land, biodiversity and GHG impact moves to the countries that replace  that production. Uses elasticities between production and farmed area for each commodity, to estimate the extent to which foregone production motivates the clearing of new agricultural land (and consequently has high impacts in LIFE and carbon, etc) in the places that production is displaced to. That part is in-prep, manuscript underway.
+This uses the MRIO framework, so it's assumed that market leakage is 100% (i.e. no elasticities of price at all).
+
+Claude was used to check scripts and rebase everything for readability and easy of use, and wrote most of the rest of this readme (thanks Claude).
+- Thomas S Ball, 10-11-2026
 
 ## Inputs
 

@@ -47,8 +47,8 @@ import _plot_funcs as pf
 import flow_matrices as fm  # on the path from _plot_funcs
 
 parser = pf.parser(__doc__)
-parser.add_argument("--size", type=float, default=None,
-                    help="the displacement size; the run's nearest is used (default: the smallest, the marginal case)")
+parser.add_argument("--size", type=float, default=1,
+                    help="the displacement size; the run's nearest is used (default: 1)")
 parser.add_argument("--total", action="store_true", help="the whole displacement at that size, not per kg displaced")
 args = parser.parse_args()
 

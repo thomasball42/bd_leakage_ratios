@@ -2,7 +2,8 @@
 """
 What the scratch plots share: the paths, the country attributes written by
 country_attributes.py, the groupings, and the style (the scatter plots' own, from
-figures/_plot_funcs.py). Figures go to {figs_dir}/{run_name}/scratch/.
+figures/_plot_funcs.py). Figures go to {figs_dir}/{run_name}/scratch/, in a
+subfolder per kind (FOLDERS).
 """
 
 import sys
@@ -43,6 +44,31 @@ GROUP_LABELS = {"Middle East, North Africa, Afghanistan & Pakistan": "Middle Eas
 SPARED, LEAKED, MUTED = pf.SERIES, "#eb6834", "#898781"
 BLUES = LinearSegmentedColormap.from_list("blues", ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"])
 DIVERGING = LinearSegmentedColormap.from_list("blue_red", ["#184f95", "#6da7ec", "#f0efec", "#ef8a89", "#a52a2a"])
+# the World Bank regions in their order around the globe, east from the Americas, as flow_chord.py's ring shows
+# them, and their colours: the reference palette's first seven categorical slots in the order 1, 2, 7, 4, 5, 6, 3,
+# which keeps every pair of neighbours on the ring, the last and first too, apart in colour-blind (OKLab ΔE ≥ 15)
+# and normal vision. The countries with no region are NO_REGION's, in muted ink.
+REGION_COLOURS = {
+    "North America": "#2a78d6",
+    "Latin America & Caribbean": "#eb6834",
+    "Sub-Saharan Africa": "#6250d6",
+    "Middle East, North Africa, Afghanistan & Pakistan": "#eda100",
+    "Europe & Central Asia": "#e87ba4",
+    "South Asia": "#008300",
+    "East Asia & Pacific": "#1baf7a",
+}
+NO_REGION = "No region"
+
+
+# the subfolders of out_dir() the figures go in, and what goes in each
+FLOWS, PROFILES, VS_ATTRIBUTES = "flows", "profiles", "vs_attributes"
+FOLDERS = {
+    FLOWS: "the leakage between groups and between countries (group_flows.py, country_flows.py), and every "
+           "country's leakage abroad at once (flow_chord.py, flow_map.py)",
+    PROFILES: "where one country's leakage goes (country_profile.py)",
+    VS_ATTRIBUTES: "the countries' leakage against their GDP per capita and self-sufficiency (leakage_vs_axes.py, "
+                   "destination_gdp.py)",
+}
 
 
 def out_dir(config: Path = _run_paths.DEFAULT_CONFIG) -> Path:
@@ -106,6 +132,39 @@ def flows(m: dict, metric: str, i: int, unit_of: dict[str, str], units: list[str
     return out[0], out[1]
 
 
+def cross_border(m: dict, metric: str, i: int) -> tuple[list[str], np.ndarray, float]:
+    """Every country's leakage to every other at size position i, weighted by its
+    production as in flows(): (isos, L, home), with L[A, B] what A's displacement
+    leaks to B, its diagonal, what stays in A, 0, and home that diagonal's share of
+    all the leakage. Negative cells (from negative betas) are set to 0, and the
+    share of the leakage they hold printed."""
+    isos = sorted(set(m["country_isos"]) | set(m["location_isos"]))
+    leaked, _ = flows(m, metric, i, {iso: iso for iso in isos}, isos)
+    home = np.trace(leaked) / leaked.sum()
+    np.fill_diagonal(leaked, 0)
+    negative = -leaked[leaked < 0].sum()
+    if negative:
+        print(f"Negative cross-border cells, set to 0: {negative / np.abs(leaked).sum():.2%} of their absolute sum")
+    return isos, leaked.clip(0), home
+
+
+def region_of(isos: list[str]) -> dict[str, str]:
+    """Each ISO3's World Bank region, a key of REGION_COLOURS, or NO_REGION."""
+    region = attributes()["wb_region"].dropna().to_dict()
+    return {iso: region[iso] if region.get(iso) in REGION_COLOURS else NO_REGION for iso in isos}
+
+
+def production(m: dict, metric: str, i: int, unit_of: dict[str, str], units: list[str]) -> np.ndarray:
+    """Each unit's production, in kg, of its countries with a result for `metric`
+    at size position i: flows()' rows over it are per kg the unit displaces (the
+    production-weighted mean of its countries' rows)."""
+    index = {unit: k for k, unit in enumerate(units)}
+    rows = np.array([index.get(unit_of.get(iso), -1) for iso in m["country_isos"]])
+    weight = np.where(np.isnan(m[f"{metric}_leaked"][i].astype(float)).all(axis=1), 0,
+                      np.nan_to_num(m["country_production_kg"]))
+    return np.bincount(rows[rows >= 0], weight[rows >= 0], minlength=len(units))
+
+
 # the flow panels: their titles, and what their values are a % of, for a displacing {unit}
 FLOW_PANELS = {
     "lands": ("Where the leakage lands", "% of all the displacing {unit} leaks"),
@@ -145,8 +204,12 @@ def new_axes(ax: plt.Axes, grid: str = "both") -> plt.Axes:
     return ax
 
 
-def save(fig: plt.Figure, name: str, config: Path = _run_paths.DEFAULT_CONFIG) -> None:
-    path = out_dir(config) / name
+def save(fig: plt.Figure, name: str, config: Path = _run_paths.DEFAULT_CONFIG, *, folder: str) -> None:
+    """Write the figure to `name` in out_dir()'s `folder`, one of FOLDERS, and close it."""
+    if folder not in FOLDERS:
+        raise ValueError(f"folder must be one of {list(FOLDERS)}, not {folder!r}")
+    path = out_dir(config) / folder / name
+    path.parent.mkdir(exist_ok=True)
     fig.savefig(path, dpi=200, facecolor=pf.SURFACE)
     plt.close(fig)
     print(f"Wrote {path}")

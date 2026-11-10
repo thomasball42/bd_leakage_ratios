@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Does leakage move down the income gradient? `python destination_gdp.py [--metric M] [--item ITEM] [--size S]
-[--panels P ...] [--annotate A ...] [--config CONFIG]` (default: extinctions, the production portfolio, the smallest
-size, all three panels). One point per displacing country C, sized by its production, in these panels, or only
+[--panels P ...] [--annotate A ...] [--config CONFIG]` (default: extinctions, the production portfolio, size 1,
+all three panels). One point per displacing country C, sized by its production, in these panels, or only
 those given with --panels (drawn in this order, whatever order they're given in):
 
   production  Where the production goes: C's GDP per capita (x) against the
@@ -42,7 +42,7 @@ ANNOTATE = ["furthest", "all", "none"]
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("--metric", choices=fm.METRICS, default="bd", help="(default: bd)")
 parser.add_argument("--item", default=fm.PORTFOLIO, help="an item code or name, or portfolio (default)")
-parser.add_argument("--size", type=float, default=None, help="the displacement size (default: the smallest)")
+parser.add_argument("--size", type=float, default=1, help="the displacement size, the run's nearest (default: 1)")
 parser.add_argument("--panels", nargs="+", choices=PANELS, default=PANELS, help="the panels drawn (default: all three)")
 parser.add_argument("--annotate", nargs="+", default=["furthest"], metavar="A",
                     help="the countries labelled: furthest (the 8 largest producers and the 6 furthest from y = x), "
@@ -153,4 +153,5 @@ fig.text(0.15 / width, 1 - (0.54 + title_extra + note_extra) / height, "\n".join
 fig.subplots_adjust(left=0.75 / width, right=1 - 0.15 / width, top=1 - header / height, bottom=0.54 / height,
                     wspace=0.22)
 which = "" if chosen == PANELS else "_" + "_".join(chosen)  # the three panels keep the plain name
-c.save(fig, f"destination_gdp_{c.stem(m)}_{args.metric}_size{m['sizes'][i]:.3g}{which}.png", args.config)
+c.save(fig, f"destination_gdp_{c.stem(m)}_{args.metric}_size{m['sizes'][i]:.3g}{which}.png", args.config,
+       folder=c.VS_ATTRIBUTES)

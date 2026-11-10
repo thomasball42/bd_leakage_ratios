@@ -2,7 +2,7 @@
 """
 The leakage ratio against GDP per capita and self-sufficiency:
 `python leakage_vs_axes.py [--metric M] [--item ITEM] [--size S] [--min-share F] [--config CONFIG]`
-(default: extinctions, the production portfolio, the smallest size, countries
+(default: extinctions, the production portfolio, size 1, countries
 with at least 0.01% of the world's production). One point per displacing country
 C, sized by its production:
 
@@ -12,7 +12,7 @@ C, sized by its production:
 
 Self-sufficiency is the share of C's consumption produced in C, from the FLMP
 trade matrix (see country_attributes.py). The ratio is on log axes, so countries
-that spare nothing or less (19 of them, at the smallest size, for the portfolio's
+that spare nothing or less (2 of them, at size 1, for the portfolio's
 extinctions) and those with a ratio of 0 or less are left out; those beyond
 --y-range are drawn at its edge as triangles. Small producers have the most
 extreme ratios, as they tend to spare little, which --min-share leaves out.
@@ -34,7 +34,7 @@ MARKS = LinearSegmentedColormap.from_list("blue_marks", ["#86b6ef", "#3987e5", "
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("--metric", choices=fm.EXTENSIFIED, default="bd", help="(default: bd)")
 parser.add_argument("--item", default=fm.PORTFOLIO, help="an item code or name, or portfolio (default)")
-parser.add_argument("--size", type=float, default=None, help="the displacement size (default: the smallest)")
+parser.add_argument("--size", type=float, default=1, help="the displacement size, the run's nearest (default: 1)")
 parser.add_argument("--min-share", type=float, default=1e-4,
                     help="leave out the countries producing less than this share of the world's production "
                          "(default: 1e-4, 0.01%%)")
@@ -122,4 +122,5 @@ fig.suptitle(f"{c.item_label(m)}: leakage ratio against GDP and self-sufficiency
 fig.text(0.01, 0.905, f"Countries with at least {args.min_share:.2%} of the world's production; the size of a point is "
          f"its production. Above the dashed line, the replacement leaks more than the displacement spares. Triangles: "
          f"beyond the axis.", color=pf.INK_2, fontsize=8.5)
-c.save(fig, f"leakage_vs_axes_{c.stem(m)}_{args.metric}_size{m['sizes'][i]:.3g}.png", args.config)
+c.save(fig, f"leakage_vs_axes_{c.stem(m)}_{args.metric}_size{m['sizes'][i]:.3g}.png", args.config,
+       folder=c.VS_ATTRIBUTES)
