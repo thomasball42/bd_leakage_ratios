@@ -101,6 +101,8 @@ EXTENSIFICATION_VALUE: float | None = config["extensification"]["value"]
 EXTENSIFICATION_STD: float | None = config["extensification"]["std"]
 CLIPPING = None if config["extensification"]["clipping"] is None else tuple(config["extensification"]["clipping"])
 SHRINKAGE: bool = config["extensification"]["shrinkage"]  # shrink each country's beta towards its item's mean
+# the beta of C's displaced production at all its sources (1 for FLMP's linear land per kg); None for the betas
+DISPLACED_BETA: float | None = config["extensification"]["displaced_beta"]
 # cap each producer's feed per kg of an animal product at this times the item's median; None for no cap
 FEED_MAX_RATIO: float | None = config["feed"]["max_ratio_to_median"]
 
@@ -235,7 +237,7 @@ def item_leakage(task: tuple[float, int]) -> tuple[pd.DataFrame, pd.DataFrame | 
                     else size * production[item_code][producing_idx])
     main, per_kg, summary, draws = _leakage_funcs.leakage_for_item(
         L, intensity, fallback, producing_idx, sources, displaced_kg, estimates[item_code], betas, PERCENTILES,
-        production[item_code], pasture_based if item_code in _leakage_funcs.PASTURE_ITEMS else None)
+        production[item_code], pasture_based if item_code in _leakage_funcs.PASTURE_ITEMS else None, DISPLACED_BETA)
     if size in DRAW_SIZES:
         save_draws(item_code, size, main, summary, draws)
     del draws

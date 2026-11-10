@@ -28,7 +28,8 @@ SETTINGS = {
     "paths": ["flmp_results_dir", "results_dir", "impacts_dir", "data_dir", "figs_dir"],
     "displacement": ["unit", "sizes", "sizes_dist", "sizes_n", "sizes_range"],
     "replacement": ["comprehensive", "exclude_self"],
-    "extensification": ["use_beta", "beta_year", "beta_files", "value", "std", "clipping", "shrinkage"],
+    "extensification": ["use_beta", "beta_year", "beta_files", "value", "std", "clipping", "shrinkage",
+                        "displaced_beta"],
     "feed": ["max_ratio_to_median"],
     "monte_carlo": ["draws", "seed", "percentiles", "save_draws"],
     "outputs": ["per_kg", "per_m2"],
@@ -36,7 +37,7 @@ SETTINGS = {
 # settings added since the first runs, with the values that keep those runs' behaviour: a config (or a run's
 # record) without them gets these
 DEFAULTS = {
-    "extensification": {"shrinkage": False},
+    "extensification": {"shrinkage": False, "displaced_beta": None},
     "feed": {"max_ratio_to_median": None},
     "monte_carlo": {"save_draws": None},
 }
@@ -106,6 +107,10 @@ def load(path: Path) -> dict:
     shrinkage = config["extensification"]["shrinkage"]
     if not isinstance(shrinkage, bool):
         problems.append(f"extensification.shrinkage must be true or false, not {shrinkage!r}")
+    displaced_beta = config["extensification"]["displaced_beta"]
+    if displaced_beta is not None and not number(displaced_beta):
+        problems.append(f"extensification.displaced_beta must be a number, or null for the betas, not "
+                        f"{displaced_beta!r}")
     max_ratio = config["feed"]["max_ratio_to_median"]
     if max_ratio is not None and not (number(max_ratio) and max_ratio > 1):
         problems.append(f"feed.max_ratio_to_median must be a number above 1, or null for no cap, not {max_ratio!r}")

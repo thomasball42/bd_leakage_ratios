@@ -491,7 +491,8 @@ def leakage_land_use(beta: np.ndarray, current_production: np.ndarray, current_l
 
 
 def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer: np.ndarray, kg: np.ndarray,
-                        row_replacement: np.ndarray, beta_central: np.ndarray) -> dict:
+                        row_replacement: np.ndarray, beta_central: np.ndarray,
+                        displaced_beta: float | None = None) -> dict:
     """The parts of extensifying each scenario's changes that don't depend on the
     betas, for evaluate_extensified, given the item's land_sources and its rows:
     `kg` more (or, if negative, less) of the item from the producer at
@@ -505,7 +506,11 @@ def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer
     with the source's FLMP production Q and land A. Each row's kg at the source
     then gets the source's land use per kg of that net change, and its SCALED
     impacts times the source's extensified over linear land change for the net
-    change. The results are summed by flow (displaced or replacement) and by where
+    change. With `displaced_beta`, the displaced flow's changes take that beta at
+    every source in place of the source's own (1 for FLMP's linear land per kg),
+    so the two flows are netted separately: C's loss isn't netted against what it
+    replaces itself, nor a feed origin's spared feed against its added feed, as
+    the same change would otherwise have two betas. The results are summed by flow (displaced or replacement) and by where
     each source is, its location: a crop's land is where it's grown, an animal
     product's pasture where the animal is, and its feed where the feed was grown.
     A source with no land (an animal product's pasture, where it has none)
@@ -549,7 +554,11 @@ def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer
     flow = row_replacement.astype(int)
     item_kg = np.zeros((2, len(scenarios), n_codes))  # displaced, replacement
     np.add.at(item_kg, (flow, scenario, row_producer), kg)
-    net = item_kg.sum(axis=0) @ per_kg
+    # the change each flow's curve is applied to (netted groups x scenarios x sources): the flows' sum, or with
+    # displaced_beta each flow's own; net_group maps a flow to its group
+    separate = displaced_beta is not None
+    net = item_kg @ per_kg if separate else (item_kg.sum(axis=0) @ per_kg)[None]
+    net_group = 1 if separate else 0
     with np.errstate(divide="ignore", invalid="ignore"):
         log_growth = np.log1p(net / production)
         production_over_net = production / net
@@ -558,10 +567,11 @@ def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer
     usable = np.isfinite(beta_central[estimate]) & (production > 0) & np.isfinite(land_use)
     # log_growth is -inf where a source loses all its production, which frees all its land
     known = usable & (np.isfinite(log_growth) | marginal | (log_growth == -np.inf))
-    impossible = ((net < -production) & ~no_land).any(axis=1)
+    impossible = ((net < -production) & ~no_land).any(axis=(0, 2))
 
     # a row is covered if any of its producer's sources is known (or has no land)
-    covered = (((known | no_land).astype(np.float32) @ (per_kg > 0).T.astype(np.float32)) > 0)[scenario, row_producer]
+    covered = (((known | no_land).astype(np.float32) @ (per_kg > 0).T.astype(np.float32)) > 0)[
+        flow * net_group, scenario, row_producer]
     flow_covered = np.zeros((2, len(scenarios)), bool)
     np.logical_or.at(flow_covered, (flow, scenario), covered)
     flow_nan = ~flow_covered | impossible
@@ -586,7 +596,7 @@ def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer
     linear = np.zeros((len(row_keys), 2 + len(SCALED)))
     linear[np.searchsorted(row_keys, segment_keys)] = np.add.reduceat(
         np.column_stack([entry_changes, entry_changes[:, 0] * pasture[entry_source]]), segment_starts, axis=0)
-    at = (entry_s, entry_source)
+    at = (entry_f * net_group, entry_s, entry_source)
     return {
         "scenarios": scenarios, "flow_nan": flow_nan,
         "row_s": row_s, "row_f": row_f, "row_loc": row_loc, "row_nan": flow_nan[row_f, row_s],
@@ -598,6 +608,7 @@ def prepare_extensified(sources: pd.DataFrame, row_coi: np.ndarray, row_producer
         "log_growth": log_growth[at], "production_over_net": production_over_net[at],
         "log_growth32": log_growth[at].astype(np.float32),
         "production_over_net32": production_over_net[at].astype(np.float32),
+        "displaced_beta": displaced_beta, "displaced": entry_f == 0,
     }
 
 
@@ -619,7 +630,9 @@ def evaluate_extensified(prepared: dict, betas: np.ndarray, errors: bool = False
                                                            p["production_over_net32"], np.float32)
     # entries x sets, so each row's entries are summed over contiguous memory; in place where it can be, as new
     # memory (fresh pages) can be many times slower to write to than reused memory
-    beta = betas[p["estimate"]].astype(dtype, copy=False)
+    beta = betas[p["estimate"]].astype(dtype, copy=False)  # a copy, by the indexing
+    if p["displaced_beta"] is not None:
+        beta[p["displaced"]] = p["displaced_beta"]
     ratio = beta * log_growth[:, None]
     with np.errstate(invalid="ignore", over="ignore"):
         np.expm1(ratio, out=ratio)
@@ -667,14 +680,16 @@ def _add_spread(table: pd.DataFrame, name: str, central: np.ndarray, draws: np.n
 def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray, coi_idx: np.ndarray,
                      sources: pd.DataFrame, displaced_kg: np.ndarray, estimates: tuple[np.ndarray, np.ndarray],
                      betas: dict, percentiles: list[float], production: np.ndarray,
-                     pasture_based: np.ndarray | None
+                     pasture_based: np.ndarray | None, displaced_beta: float | None = None
                      ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, np.ndarray | None]:
     """Leakage of displacing `displaced_kg` (one per country of interest) of the
     item in each country of interest at `coi_idx`, given L, its per-kg
     `intensity` and its fallback mask, its land_sources, each producer's beta
     estimate and World-fallback mask (`estimates`), the betas from draw_betas,
     and its FLMP `production` (kg) and, for animal products, each producer's
-    `pasture_based` production, all on the codes index.
+    `pasture_based` production, all on the codes index. With `displaced_beta`,
+    C's displaced production takes that beta at all its sources (see
+    prepare_extensified); the extensification columns stay each location's own.
 
     Returns three tables, each with coi_idx (and the first two location_idx), and
     the draws:
@@ -701,7 +716,8 @@ def leakage_for_item(L: np.ndarray, intensity: np.ndarray, fallback: np.ndarray,
     """
     scenario, producer, share, replacement = replacement_rows(L, coi_idx)
     kg = share * displaced_kg[scenario]
-    prepared = p = prepare_extensified(sources, coi_idx[scenario], producer, kg, replacement, betas["central"])
+    prepared = p = prepare_extensified(sources, coi_idx[scenario], producer, kg, replacement, betas["central"],
+                                       displaced_beta)
     central = evaluate_extensified(prepared, betas["central"], errors=True)[..., 0]  # columns x rows
     draws = None  # columns x rows x draws
     if betas["draws"] is not None:

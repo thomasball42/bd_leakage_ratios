@@ -17,7 +17,8 @@ those given with --panels (drawn in this order, whatever order they're given in)
 
 The means are geometric (of log GDP), and leave out C itself, so they're of the
 leakage abroad. Countries with less than 90% of the weight on places with a GDP
-per capita (or with none of their own) are left out.
+per capita (or with none of their own) are left out. Each panel has the line of
+best fit, least squares of log y on log x, with its slope.
 
 --annotate labels the 8 largest producers and the 6 furthest from y = x in each
 panel (furthest, the default), every country (all), none, or only the countries
@@ -105,7 +106,8 @@ title_lines = textwrap.wrap(f"{c.item_label(m)}: does leakage move to poorer cou
                             f"{pf.size_text(m, m['sizes'][i])}", int(width / 0.09))
 note_lines = textwrap.wrap("GDP per capita, PPP (constant 2021 $), in 2021. The places abroad are averaged "
                            "geometrically, weighted by what each replaces or takes; the size of a point is its "
-                           "production. Below the dashed y = x line, it goes to poorer places.", int(width / 0.065))
+                           "production. Below the dashed y = x line, it goes to poorer places; the solid line is the least-squares "
+                           "fit on the log scales.", int(width / 0.065))
 title_extra = (len(title_lines) - 1) * 12 * 1.2 / 72  # 12-point lines, at matplotlib's 1.2 spacing
 note_extra = (len(note_lines) - 1) * 8.5 * 1.3 / 72  # 8.5-point lines, at 1.3
 header = 0.918 + title_extra + note_extra
@@ -118,6 +120,10 @@ for ax, (x, y, x_label, y_label, title) in zip(axes, panels):
     c.new_axes(ax)
     ax.plot([lo, hi], [lo, hi], color=pf.INK_2, linewidth=1, linestyle=(0, (4, 3)), zorder=2)
     ax.scatter(x, y, s=sizes, color=pf.SERIES, edgecolor=pf.SURFACE, linewidth=1, alpha=0.75, zorder=3)
+    # the line of best fit: least squares of log y on log x, a straight line on the log axes, over the countries' range
+    slope, intercept = np.polyfit(np.log(x), np.log(y), 1)
+    fit_x = np.array([x.min(), x.max()])
+    ax.plot(fit_x, np.exp(intercept) * fit_x ** slope, color=pf.INK, linewidth=1.25, zorder=4)
     # label the largest producers and those furthest from y = x, every country, none, or those named
     if annotate == ["furthest"]:
         distance = np.abs(np.log(y / x))
@@ -128,7 +134,7 @@ for ax, (x, y, x_label, y_label, title) in zip(axes, panels):
         ax.annotate(isos[j], (x[j], y[j]), xytext=(4, 3), textcoords="offset points", fontsize=7.5, color=pf.INK)
     below = y < x
     ax.text(0.98, 0.02, f"below y = x: {below.sum()} of {len(x)} countries,\n{production[below].sum() / production.sum():.0%} "
-            "of their production", transform=ax.transAxes, ha="right", va="bottom", fontsize=7.5, color=pf.INK_2)
+            f"of their production\nbest fit: slope {slope:.2f}", transform=ax.transAxes, ha="right", va="bottom", fontsize=7.5, color=pf.INK_2)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(lo, hi)

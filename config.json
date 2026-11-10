@@ -1,6 +1,6 @@
 {
   "run": {
-    "run_name": "261103_update_mcdraws_flat",
+    "run_name": "261109_clean",
     "year": 2021,
     "countries": null
   },
@@ -29,13 +29,14 @@
     "value": 0.0,
     "std": 0.0,
     "clipping": [0.0, null],
-    "shrinkage": true
+    "shrinkage": true,
+    "displaced_beta": null
   },
   "feed": {
     "max_ratio_to_median": 3
   },
   "monte_carlo": {
-    "draws": 2000,
+    "draws": 1000,
     "seed": 42,
     "percentiles": [5, 50, 95],
     "save_draws": {"sizes": [0.1, 1, 10, 100], "items": []}
