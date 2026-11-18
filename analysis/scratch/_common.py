@@ -59,6 +59,11 @@ REGION_COLOURS = {
 }
 NO_REGION = "No region"
 
+# every font size is multiplied by this, set from the plots' --font-scale (set_font_scale); see fs()
+FONT_SCALE = 1.0
+FONT_SCALE_HELP = ("multiply every font size by this, e.g. 2 to double them, keeping their sizes relative to each "
+                   "other; the plotted marks keep their size and the margins that hold text grow with it (default: 1)")
+
 
 # the subfolders of out_dir() the figures go in, and what goes in each
 FLOWS, PROFILES, VS_ATTRIBUTES = "flows", "profiles", "vs_attributes"
@@ -165,6 +170,21 @@ def production(m: dict, metric: str, i: int, unit_of: dict[str, str], units: lis
     return np.bincount(rows[rows >= 0], weight[rows >= 0], minlength=len(units))
 
 
+def everywhere(m: dict, metric: str, i: int, unit_of: dict[str, str],
+               units: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """All that each unit's countries leak and spare at size position i, weighted by
+    their production as in flows(), but summed over every location, those with no
+    unit too: (leaked, spared), each one per unit. leaked ÷ spared is the unit's
+    leakage ratio, as country_profile.py's is a country's (all leaked ÷ all spared),
+    and for a unit of one country it's that country's."""
+    index = {unit: k for k, unit in enumerate(units)}
+    rows = np.array([index.get(unit_of.get(iso), -1) for iso in m["country_isos"]])
+    weight = np.nan_to_num(m["country_production_kg"])
+    return tuple(np.bincount(rows[rows >= 0],
+                             (np.nansum(m[f"{metric}_{kind}"][i].astype(float), axis=1) * weight)[rows >= 0],
+                             minlength=len(units)) for kind in ["leaked", "spared"])
+
+
 # the flow panels: their titles, and what their values are a % of, for a displacing {unit}
 FLOW_PANELS = {
     "lands": ("Where the leakage lands", "% of all the displacing {unit} leaks"),
@@ -193,6 +213,20 @@ def flow_panels(leaked: np.ndarray, spared: np.ndarray) -> dict[str, np.ndarray]
         }
 
 
+def set_font_scale(scale: float) -> None:
+    """Multiply every font size by `scale`: those given with fs(), and matplotlib's default for text with none."""
+    global FONT_SCALE
+    if not scale > 0:
+        raise ValueError(f"the font scale must be above 0, not {scale}")
+    plt.rcParams["font.size"] = plt.rcParams["font.size"] / FONT_SCALE * scale
+    FONT_SCALE = scale
+
+
+def fs(size: float) -> float:
+    """A font size, in points, times the --font-scale."""
+    return size * FONT_SCALE
+
+
 def new_axes(ax: plt.Axes, grid: str = "both") -> plt.Axes:
     """Style an axes as the scatter plots are: no spines, a hairline grid, and quiet ticks."""
     ax.set_facecolor(pf.SURFACE)
@@ -200,7 +234,7 @@ def new_axes(ax: plt.Axes, grid: str = "both") -> plt.Axes:
         spine.set_visible(False)
     ax.grid(color=pf.GRID, linewidth=0.8, axis=grid)
     ax.set_axisbelow(True)
-    ax.tick_params(colors=pf.INK_2, length=0, labelsize=8)
+    ax.tick_params(colors=pf.INK_2, length=0, labelsize=fs(8))
     return ax
 
 

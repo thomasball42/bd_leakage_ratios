@@ -2,8 +2,8 @@
 """
 Where the impacts of one country's displaced production go, at one displacement
 size: `python country_profile.py [ISO ...] [--item ITEM] [--size S] [--top N] [--metrics M ...]
-[--groups region|income] [--drop-ungrouped] [--uncertainty [--percentiles LO HI]]
-[--global-net separate|together] [--config CONFIG]`
+[--groups region|income] [--drop-ungrouped] [--uncertainty [none|net|outer|all] [--percentiles LO HI]]
+[--global-net separate|together] [--no-subtitle] [--font-scale X] [--config CONFIG]`
 (default: GBR BRA, the production portfolio, size 1, land use, extinctions and carbon
 opportunity cost, by country). Three figures per country C (two with --global-net together), with a
 panel per metric, in the scratch figures' profiles/ folder:
@@ -40,13 +40,25 @@ with --drop-ungrouped), all shown unless --top is fewer. With --metrics other th
 the default, or --groups, those are in the file names, e.g.
 profile_GBR_portfolio_bd_by_region_bars.png.
 
-With --uncertainty, each bar has whiskers from the 5th to the 95th percentile (or
---percentiles) over the run's Monte Carlo draws of what's spared or leaked there,
-in the same units. They're from the draws the run
+With --uncertainty, whiskers from the 5th to the 95th percentile (or
+--percentiles) over the run's Monte Carlo draws, in the same units: with outer, at
+the bars' ends, of what's spared or leaked there; with net, through the net change
+(dot), from the net's own percentiles, leaked - spared in each draw, so not the
+bars' whiskers' difference (spared and leaked rise and fall together, valued with
+the same drawn betas, so the net's range is narrower); with all (as --uncertainty
+alone gives), both; with none (the default), neither. The net global effect's
+percentiles are written above it with net or all. They're from the draws the run
 saves for each location (monte_carlo.save_draws), summed in each draw for the
 groups and the rest of the world, so they're exact for any row. The run saves them
 only for the portfolio and the items, at the sizes, in its save_draws. Production
 GHG has no whiskers, as it doesn't depend on the betas.
+
+With --no-subtitle (or --nosub), the grey description under each figure's title is
+left out, all but the bars' line of leakage ratios. --font-scale multiplies every
+font size, e.g. 2 doubles them; the bars and points keep their size and the
+margins that hold text (the labels' column, the titles, the axes' labels) grow
+with it, and text wider than its panel (the axes' labels, the net global effect's
+note) wraps onto more lines.
 """
 
 import argparse
@@ -54,6 +66,7 @@ import textwrap
 from pathlib import Path
 
 import numpy as np
+from matplotlib.legend_handler import HandlerTuple
 from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import Bbox, ScaledTranslation
 
@@ -75,9 +88,11 @@ parser.add_argument("--groups", choices=list(c.GROUPINGS), default=None,
 parser.add_argument("--drop-ungrouped", action="store_true",
                     help="with --groups, leave out the locations with no group (the 'No region' row); the share of "
                          "the leakage that leaves out is printed")
-parser.add_argument("--uncertainty", action="store_true",
-                    help="whiskers on the bars, over the run's Monte Carlo draws (needs the draws saved for the item "
-                         "and size: the run's monte_carlo.save_draws)")
+parser.add_argument("--uncertainty", nargs="?", choices=["none", "net", "outer", "all"], default="none",
+                    const="all",
+                    help="whiskers over the run's Monte Carlo draws: through the net change (net), at the bars' "
+                         "ends (outer), both (all, as --uncertainty alone gives) or neither (none, the default); "
+                         "needs the draws saved for the item and size: the run's monte_carlo.save_draws")
 parser.add_argument("--percentiles", nargs=2, type=float, default=[5, 95], metavar=("LO", "HI"),
                     help="the whiskers' percentiles, with --uncertainty (default: 5 95)")
 parser.add_argument("--global-net", choices=["separate", "together"], default="separate",
@@ -86,8 +101,16 @@ parser.add_argument("--global-net", choices=["separate", "together"], default="s
                          "of the bars (together)")
 parser.add_argument("--floor", type=float, default=1e-4,
                     help="the smallest share shown on the shares' log axes (default: 1e-4, 0.01%%)")
+parser.add_argument("--no-subtitle", "--nosub", action="store_true",
+                    help="leave out the grey description under each figure's title, all but the bars' line of "
+                         "leakage ratios")
+parser.add_argument("--font-scale", "--fontsize-scale", type=float, default=1, metavar="X", help=c.FONT_SCALE_HELP)
 parser.add_argument("--config", type=Path, default=c._run_paths.DEFAULT_CONFIG, help=c._run_paths.CONFIG_HELP)
 args = parser.parse_args()
+if not args.font_scale > 0:
+    parser.error(f"--font-scale must be above 0, not {args.font_scale}")
+c.set_font_scale(args.font_scale)
+SCALE = c.FONT_SCALE  # the margins that hold text, in inches, are multiplied by it
 if args.drop_ungrouped and not args.groups:
     parser.error("--drop-ungrouped needs --groups")
 if not 0 <= args.percentiles[0] < args.percentiles[1] <= 100:
@@ -106,6 +129,10 @@ percent = FuncFormatter(lambda v, _: f"{v * 100:.3g}%")
 # (offset in points, and alignment)
 PLACES = [(5, 0, "left", "center"), (-5, 0, "right", "center"), (4, 3, "left", "bottom"), (-4, 3, "right", "bottom"),
           (4, -3, "left", "top"), (-4, -3, "right", "top"), (0, 6, "center", "bottom"), (0, -6, "center", "top")]
+# the net change's whiskers, with shorter caps than the bars'
+NET_WHISKER = dict(color=pf.INK, linewidth=0.9)
+# which whiskers --uncertainty draws: at the bars' ends, and through the net change
+OUTER, NET = args.uncertainty in ("outer", "all"), args.uncertainty in ("net", "all")
 if args.groups:
     column, groups = c.GROUPINGS[args.groups]
     group_of = attributes[column]
@@ -142,7 +169,8 @@ def grouped(iso: str, *values: dict | np.ndarray, drop: bool = False) -> tuple[l
 
 def label(ax: plt.Axes, points: list[tuple[float, float, str | None]]) -> None:
     """Label the (x, y, text) points that have a text, in turn, each at the first of PLACES around it that stays in
-    the panel and overlaps no other point or earlier label, or else at the first."""
+    the panel and overlaps no other point or earlier label, or else at the first that stays in the panel (so it isn't
+    hidden under the next one), or else at the first."""
     renderer = ax.figure.canvas.get_renderer()
     panel = ax.get_window_extent(renderer)
     r = 4 * ax.figure.dpi / 72  # a point's radius and a little, in pixels
@@ -150,7 +178,7 @@ def label(ax: plt.Axes, points: list[tuple[float, float, str | None]]) -> None:
             for px, py in ax.transData.transform([(x, y) for x, y, _ in points])]
 
     def note(text: str, x: float, y: float, dx: int, dy: int, ha: str, va: str) -> plt.Annotation:
-        return ax.annotate(text, (x, y), xytext=(dx, dy), textcoords="offset points", ha=ha, va=va, fontsize=7.5,
+        return ax.annotate(text, (x, y), xytext=(dx, dy), textcoords="offset points", ha=ha, va=va, fontsize=c.fs(7.5),
                            color=pf.INK)
 
     labels = []
@@ -158,29 +186,37 @@ def label(ax: plt.Axes, points: list[tuple[float, float, str | None]]) -> None:
         if text is None:
             continue
         taken = labels + dots[:j] + dots[j + 1:]
+        inside = None  # the first place in the panel, if none is clear of the rest too
         for place in PLACES:
             annotation = note(text, x, y, *place)
             box = annotation.get_window_extent(renderer)
-            if panel.x0 <= box.x0 and box.x1 <= panel.x1 and not any(box.overlaps(other) for other in taken):
-                break
             annotation.remove()
+            if panel.x0 <= box.x0 and box.x1 <= panel.x1:
+                inside = inside or place
+                if not any(box.overlaps(other) for other in taken):
+                    break
         else:
-            box = note(text, x, y, *PLACES[0]).get_window_extent(renderer)
+            # none clear: overlapping another label, rather than hidden under the next panel
+            place = inside or PLACES[0]
+        box = note(text, x, y, *place).get_window_extent(renderer)
         labels.append(box)
 
 
-def heading(fig: plt.Figure, left: float, title: str, subtitle: str) -> float:
+def heading(fig: plt.Figure, left: float, title: str, subtitle: str, kept: str = "") -> float:
     """Write the title and subtitle at the top of `fig`, `left` inches in, wrapped to its width at about half an em
     a character and a fixed distance from its top whatever its height, and return how far down they reach, in
-    inches."""
+    inches. `kept` is the subtitle's last line, the one --no-subtitle keeps."""
+    subtitle = "\n".join(t for t in ["" if args.no_subtitle else subtitle, kept] if t)
     width = fig.get_figwidth() - left - 0.15
-    y = 0.18
-    for text, size, color, spacing in [(title, 12, pf.INK, 1.3), (subtitle, 8.5, pf.INK_2, 1.5)]:
+    y = 0.18 * SCALE
+    for text, size, color, spacing in [(title, c.fs(12), pf.INK, 1.3), (subtitle, c.fs(8.5), pf.INK_2, 1.5)]:
+        if not text:
+            continue
         text = "\n".join(textwrap.fill(line, int(width * 72 / (0.55 * size))) for line in text.split("\n"))
         fig.text(left / fig.get_figwidth(), 1, text, color=color, fontsize=size, va="top", linespacing=spacing,
                  transform=fig.transFigure + ScaledTranslation(0, -y, fig.dpi_scale_trans))
-        y += (text.count("\n") + 1) * size * spacing / 72 + 0.07
-    return y - 0.07
+        y += (text.count("\n") + 1) * size * spacing / 72 + 0.07 * SCALE
+    return y - 0.07 * SCALE
 
 
 def ordinal(q: float) -> str:
@@ -190,9 +226,10 @@ def ordinal(q: float) -> str:
 
 
 def bars(ax: plt.Axes, spared: np.ndarray, leaked: np.ndarray, labels: list[str],
-         ranges: tuple[np.ndarray, np.ndarray] | None = None) -> None:
+         ranges: tuple[np.ndarray, np.ndarray] | None = None, net_range: np.ndarray | None = None) -> None:
     """Spared to the left and leaked to the right of 0, with the net as a dot, one row per label, and whiskers
-    from `ranges`' spared and leaked (each 2 x rows, low and high) where there are any."""
+    from `ranges`' spared and leaked (each 2 x rows, low and high) where there are any, and white ones through the
+    dots, with shorter caps, from `net_range` (2 x rows), where it's given."""
     y = np.arange(len(labels))
     ax.barh(y, -spared, height=0.62, color=c.SPARED, edgecolor=pf.SURFACE, linewidth=1)
     ax.barh(y, leaked, height=0.62, color=c.LEAKED, edgecolor=pf.SURFACE, linewidth=1)
@@ -201,16 +238,43 @@ def bars(ax: plt.Axes, spared: np.ndarray, leaked: np.ndarray, labels: list[str]
         ends, rows = sign * np.concatenate([low[drawn], high[drawn]]), np.tile(y[drawn], 2)
         ax.hlines(y[drawn], sign * low[drawn], sign * high[drawn], color=pf.INK, linewidth=0.9, zorder=2.5)
         ax.vlines(ends, rows - 0.14, rows + 0.14, color=pf.INK, linewidth=0.9, zorder=2.5)
+    if net_range is not None:
+        low, high = net_range
+        drawn = np.isfinite(low) & np.isfinite(high) & (low != high)
+        ax.hlines(y[drawn], low[drawn], high[drawn], zorder=2.8, **NET_WHISKER)
+        ax.vlines(np.concatenate([low[drawn], high[drawn]]), np.tile(y[drawn], 2) - 0.1, np.tile(y[drawn], 2) + 0.1,
+                  zorder=2.8, **NET_WHISKER)
     ax.scatter(leaked - spared, y, s=22, color=pf.INK, edgecolor=pf.SURFACE, linewidth=1, zorder=3)
     ax.axvline(0, color=pf.INK_2, linewidth=0.8)
-    ax.set_yticks(y, labels, fontsize=8, color=pf.INK)
+    ax.set_yticks(y, labels, fontsize=c.fs(8), color=pf.INK)
     ax.set_ylim(len(labels) - 0.5, -0.5)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:+.4g}" if v else "0"))
 
 
-def x_label(k: str, power: int) -> str:
-    """The bars' x axis' label in metric k, over 10**power."""
-    return f"{pf.UNITS[k]} per kg displaced" + (rf" ($\times10^{{{power}}}$)" if power else "")
+def x_label(k: str, power: int) -> list[str]:
+    """The bars' x axis' label in metric k, over 10**power, in the parts fitted() may break it between."""
+    return [f"{pf.UNITS[k]} per kg displaced"] + ([rf" ($\times10^{{{power}}}$)"] if power else [])
+
+
+def fitted(fig: plt.Figure, parts: list[str], size: float, width: float) -> str:
+    """The parts of a line of text joined, onto as many lines as it takes to keep each, at font `size`, within
+    `width` inches (but for a part wider on its own), so that text doesn't run into the next panel at a large
+    --font-scale."""
+    renderer = fig.canvas.get_renderer()
+
+    def wide(text: str) -> float:
+        probe = fig.text(0, 0, text, fontsize=size)
+        inches = probe.get_window_extent(renderer).width / fig.dpi
+        probe.remove()
+        return inches
+
+    lines = [parts[0]]
+    for part in parts[1:]:
+        if wide(lines[-1] + part) <= width:
+            lines[-1] += part
+        else:
+            lines.append(part.lstrip())
+    return "\n".join(lines)
 
 
 def magnitude(*values: np.ndarray | tuple[np.ndarray, ...] | None) -> int:
@@ -246,16 +310,17 @@ for iso in args.countries:
     replaced = m["replaced_share"][row].astype(float)
     leaked_all = {k: leaked[k].sum() for k in metrics}  # with any locations left out by --drop-ungrouped
     # each location's spared and leaked in each draw (locations x draws), for the whiskers
-    drawn = [k for k in metrics if k in fm.EXTENSIFIED] if args.uncertainty else []
+    drawn = [k for k in metrics if k in fm.EXTENSIFIED] if OUTER or NET else []
     in_draws = fm.draws(m, iso, m["sizes"][i], args.config) if drawn else {}
     spared_draws = {k: in_draws[f"{k}_spared"] for k in drawn}
     leaked_draws = {k: in_draws[f"{k}_leaked"] for k in drawn}
     # the net global effect, over every location (before any are left out by --drop-ungrouped): all spared and all
     # leaked, and their whiskers, from their sums in each draw; and the net's range over the draws
+    net_range = {k: np.percentile((leaked_draws[k] - spared_draws[k]).sum(axis=0), args.percentiles) for k in drawn}
     world = {k: [np.array([total[k]]), np.array([leaked_all[k]]),
                  tuple(np.percentile(x[k].sum(axis=0)[None], args.percentiles, axis=1)
-                       for x in [spared_draws, leaked_draws]) if k in drawn else None] for k in metrics}
-    net_range = {k: np.percentile((leaked_draws[k] - spared_draws[k]).sum(axis=0), args.percentiles) for k in drawn}
+                       for x in [spared_draws, leaked_draws]) if k in drawn and OUTER else None,
+                 net_range[k][:, None] if k in drawn and NET else None] for k in metrics}
     span = f"{ordinal(args.percentiles[0])}–{ordinal(args.percentiles[1])} percentile"
     units, dropped = locations, 0
     if args.groups:
@@ -287,22 +352,35 @@ for iso in args.countries:
     def ranges(k: str, rows: list) -> tuple[np.ndarray, np.ndarray] | None:
         """The whiskers' spared and leaked ends (each 2 x rows) in metric k, per kg displaced."""
         return (tuple(np.percentile(in_rows(x[k], rows), args.percentiles, axis=1)
-                      for x in [spared_draws, leaked_draws]) if k in drawn else None)
+                      for x in [spared_draws, leaked_draws]) if k in drawn and OUTER else None)
 
-    def world_axes(ax: plt.Axes, k: str, power: int, first: bool) -> tuple[plt.Axes, plt.Annotation]:
-        """The net global effect in metric k on `ax`, over 10**power, with the net (and its range over the draws, on
-        a second line) written over it, and the note that says so."""
-        c.new_axes(ax, grid="x")
-        bars(ax, *[scaled(x, power) for x in world[k][:2]], ["World (all locations)"], scaled(world[k][2], power))
+    def net_ranges(k: str, rows: list) -> np.ndarray | None:
+        """The net change's whiskers (2 x rows, low and high) in metric k, per kg displaced: the percentiles of
+        leaked - spared, summed over each row's units in each draw."""
+        return (np.percentile(in_rows(leaked_draws[k] - spared_draws[k], rows), args.percentiles, axis=1)
+                if k in drawn and NET else None)
+
+    def net_note(fig: plt.Figure, k: str, power: int, width: float) -> str:
+        """What's written over the net global effect in metric k, over 10**power: the net, and its range over the
+        draws on the next line, each fitted() to `width` inches."""
         times = rf"$\times10^{{{power}}}$" if power else ""
         net = world[k][1][0] - world[k][0][0]
-        text = f"Net {net / 10.0 ** power:+.3g}{times}, {net / world[k][0][0]:+.1%} of all spared"
-        if k in drawn:
+        lines = [[f"Net {net / 10.0 ** power:+.3g}{times},", f" {net / world[k][0][0]:+.1%} of all spared"]]
+        if k in drawn and NET:
             low, high = net_range[k] / 10.0 ** power
-            text += f"\n{span}: {low:+.3g}{times} to {high:+.3g}{times}"
-        note = ax.annotate(text, (0, 1), xycoords="axes fraction", xytext=(0, 4), textcoords="offset points",
-                           ha="left", va="bottom", color=pf.INK, fontsize=8.5, linespacing=1.4)
-        ax.set_xlabel(x_label(k, power), color=pf.INK_2, fontsize=8)
+            lines.append([f"{span}:", f" {low:+.3g}{times} to", f" {high:+.3g}{times}"])
+        return "\n".join(fitted(fig, parts, c.fs(8.5), width) for parts in lines)
+
+    def world_axes(ax: plt.Axes, k: str, power: int, first: bool) -> tuple[plt.Axes, plt.Annotation]:
+        """The net global effect in metric k on `ax`, over 10**power, with notes[k], the net (and its range over the
+        draws, on a second line), written over it, and the note that says so."""
+        c.new_axes(ax, grid="x")
+        bars(ax, *[scaled(x, power) for x in world[k][:2]], ["World (all locations)"],
+             *[scaled(x, power) for x in world[k][2:]])
+        note = ax.annotate(notes[k], (0, 1), xycoords="axes fraction", xytext=(0, 4 * SCALE),
+                           textcoords="offset points", ha="left", va="bottom", color=pf.INK, fontsize=c.fs(8.5),
+                           linespacing=1.4)
+        ax.set_xlabel(x_labels[k], color=pf.INK_2, fontsize=c.fs(8))
         if not first:
             ax.set_yticklabels([])
         return ax, note
@@ -313,57 +391,79 @@ for iso in args.countries:
     any_metric = " in any metric" if several else ""
     order = (f" with the largest net change{any_metric}, from the largest net increase to the largest net decrease"
              if len(rest) else f", from the largest net increase to the largest net decrease{any_metric}")
-    # 1.8 inches for the labels and 3.4 for each panel, wide enough for the legend
-    width = max(1.8 + 3.4 * len(metrics), 7.5)
+    # 1.8 inches for the labels and 3.4 for each panel, wide enough for the legend, with 0.24 of it right of the
+    # panels for the last tick label; the labels' and tick labels' grow with the --font-scale
+    left, right = 1.8 * SCALE, 0.24 * SCALE
+    width = left + max(3.4 * len(metrics), 5.7) - 0.24 + right
     fig = plt.figure(figsize=(width, 1), facecolor=pf.SURFACE)
-    head = heading(fig, 1.8, title,
+    head = heading(fig, left, title,
                    f"Home (top) and {which}{order}, in {'each metric' if several else 'the metric'}'s units per kg displaced."
                    + (" At the bottom, the net global effect: all of it, summed over every location." if together
-                      else "")
-                   + f"\nLeakage ratio, all leaked ÷ all spared: {ratios}")
-    # the legend under the heading, on one row if it fits beside the labels' column, else on two
+                      else ""),
+                   f"Leakage ratio, all leaked ÷ all spared: {ratios}")
+    # the legend under the heading, on one row if it fits beside the labels' column, else in two columns, else one
+    dot = plt.Line2D([], [], marker="o", linestyle="", color=pf.INK, markersize=5)
     handles = [plt.Rectangle((0, 0), 1, 1, color=c.SPARED), plt.Rectangle((0, 0), 1, 1, color=c.LEAKED),
-               plt.Line2D([], [], marker="o", linestyle="", color=pf.INK, markersize=5)]
+               (plt.Line2D([], [], **NET_WHISKER), dot) if drawn and NET else dot]
     entries = ["Spared by the displacement", "Leaked by the replacement", "Net change"]
     if drawn:
         handles.append(plt.Line2D([], [], color=pf.INK, linewidth=0.9, marker="|", markersize=7))
         entries.append(span)
-    legend = dict(handles=handles, labels=entries, loc="upper left", frameon=False, fontsize=8, labelcolor=pf.INK)
-    one_row = fig.legend(ncol=len(entries), **legend)
-    fits = one_row.get_window_extent(fig.canvas.get_renderer()).width / fig.dpi <= width - 1.84
-    one_row.remove()
-    second_row = 0 if fits else 0.17
+    legend = dict(handles=handles, labels=entries, loc="upper left", frameon=False, fontsize=c.fs(8),
+                  labelcolor=pf.INK, handler_map={tuple: HandlerTuple(ndivide=None)})
+    for ncol in [len(entries), 2, 1]:
+        trial = fig.legend(ncol=ncol, **legend)
+        fits = trial.get_window_extent(fig.canvas.get_renderer()).width / fig.dpi <= width - left - 0.04
+        trial.remove()
+        if fits:
+            break
+    more_rows = (-(-len(entries) // ncol) - 1) * 0.17 * SCALE  # the legend's rows after its first
     # one bar's row, in inches (the 5.18 of the panels, less the gap between them, 6% of their height, over their
     # rows), as tall as the net global effect's panels; together, those are `gap` below the panels above, for their
     # tick labels, a rule, the section's heading and the net (on two lines with the whiskers' range)
-    row = 5.18 / ((len(labels) + 1.5) * 1.06)
-    gap = 0.92 + (0.14 if drawn else 0)
-    above = 0.58 + (row + gap if together else 0)  # the bottom of the panels above, in inches from the figure's
-    height = head + 6.38 + second_row + above - 0.58
+    # (the gap between the home panel and the rest, for the home panel's tick labels, is hspace of their mean height,
+    # so the panels are 1 + hspace / 2 of their 5.18 inches less it); the margins that hold text grow with the
+    # --font-scale: over the panels, the legend's first row and the panels' titles, and under them, their tick
+    # labels and axis' label
+    hspace, wspace = 0.12 * SCALE, 0.08 * SCALE  # the gaps between the panels, for their tick labels
+    row = 5.18 / ((len(labels) + 1.5) * (1 + hspace / 2))
+    # each metric's bars, home and the rest, and the power of 10 they're shown in: the panel's, so its tick labels
+    # are short, and the net global effect's the same
+    home_bars = {k: [spared[k][home], leaked[k][home], ranges(k, [np.flatnonzero(home)]),
+                     net_ranges(k, [np.flatnonzero(home)])] for k in metrics}
+    row_bars = {k: [in_rows(spared[k], rows), in_rows(leaked[k], rows), ranges(k, rows), net_ranges(k, rows)]
+                for k in metrics}
+    powers = {k: magnitude(*home_bars[k], *row_bars[k], *world[k]) for k in metrics}
+    # the text under and over each panel, on as many lines as keep it within the panel's width
+    panel = (width - left - right) / (len(metrics) + (len(metrics) - 1) * wspace)
+    x_labels = {k: fitted(fig, x_label(k, powers[k]), c.fs(8), panel) for k in metrics}
+    notes = {k: net_note(fig, k, powers[k], panel) for k in metrics}
+    label_lines = max(text.count("\n") for text in x_labels.values())  # after the first
+    note_lines = max(text.count("\n") for text in notes.values())
+    gap = (0.92 + 0.14 * note_lines) * SCALE
+    under = (0.58 + 0.16 * label_lines) * SCALE  # under the lowest panels, for their tick labels and axis' label
+    above = under + (row + gap if together else 0)  # the bottom of the panels above, in inches from the figure's
+    over = head + 0.62 * SCALE + more_rows  # the top of the panels, in inches from the figure's
+    height = over + 5.18 + above
     fig.set_figheight(height)
-    grid = fig.add_gridspec(2, len(metrics), height_ratios=[1, len(labels) + 0.5], hspace=0.12, wspace=0.08,
-                            left=1.8 / width, right=1 - 0.24 / width, top=1 - (head + 0.62 + second_row) / height,
-                            bottom=above / height)
+    grid = fig.add_gridspec(2, len(metrics), height_ratios=[1, len(labels) + 0.5], hspace=hspace, wspace=wspace,
+                            left=left / width, right=1 - right / width, top=1 - over / height, bottom=above / height)
     if together:
-        world_grid = fig.add_gridspec(1, len(metrics), wspace=0.08, left=1.8 / width, right=1 - 0.24 / width,
-                                      top=(0.58 + row) / height, bottom=0.58 / height)
-        fig.add_artist(plt.Line2D([0.15 / width, 1 - 0.24 / width], [(above - 0.34) / height] * 2,
+        world_grid = fig.add_gridspec(1, len(metrics), wspace=wspace, left=left / width, right=1 - right / width,
+                                      top=(under + row) / height, bottom=under / height)
+        fig.add_artist(plt.Line2D([0.15 / width, 1 - right / width], [(above - 0.34 * SCALE) / height] * 2,
                                   transform=fig.transFigure, color=pf.INK_2, linewidth=0.8))
-        fig.text(0.15 / width, (above - 0.42) / height, "Net global effect", color=pf.INK, fontsize=10.5,
-                 fontweight="bold", va="top")
-    powers = {}  # each metric's, for the net global effect's figure too
+        fig.text(0.15 / width, (above - 0.42 * SCALE) / height, "Net global effect", color=pf.INK,
+                 fontsize=c.fs(10.5), fontweight="bold", va="top")
     for j, k in enumerate(metrics):
-        home_bars = [spared[k][home], leaked[k][home], ranges(k, [np.flatnonzero(home)])]
-        row_bars = [in_rows(spared[k], rows), in_rows(leaked[k], rows), ranges(k, rows)]
-        # the panel's, so its tick labels are short, and the net global effect's the same
-        powers[k] = power = magnitude(*home_bars, *row_bars, *world[k])
+        power = powers[k]
         ax_home = c.new_axes(fig.add_subplot(grid[0, j]), grid="x")
-        bars(ax_home, *[scaled(x, power) for x in home_bars[:2]], [f"{name(iso)} (home)"],
-             scaled(home_bars[2], power))
-        ax_home.set_title(c.SHORT[k], color=pf.INK, fontsize=10, loc="left")
+        bars(ax_home, *[scaled(x, power) for x in home_bars[k][:2]], [f"{name(iso)} (home)"],
+             *[scaled(x, power) for x in home_bars[k][2:]])
+        ax_home.set_title(c.SHORT[k], color=pf.INK, fontsize=c.fs(10), loc="left")
         # on the home bar's scale, so they can be compared
         ax = c.new_axes(fig.add_subplot(grid[1, j], sharex=ax_home), grid="x")
-        bars(ax, *[scaled(x, power) for x in row_bars[:2]], labels, scaled(row_bars[2], power))
+        bars(ax, *[scaled(x, power) for x in row_bars[k][:2]], labels, *[scaled(x, power) for x in row_bars[k][2:]])
         if len(rest):
             ax.axhline(len(labels) - 1.5, color=pf.GRID, linewidth=0.8)
         if j:
@@ -372,49 +472,57 @@ for iso in args.countries:
         if together:  # on the same scale, under the rule, with the axis' label
             world_axes(fig.add_subplot(world_grid[0, j], sharex=ax_home), k, power, first=not j)
         else:
-            ax.set_xlabel(x_label(k, power), color=pf.INK_2, fontsize=8)
-    fig.legend(ncol=len(entries) if fits else 2, bbox_to_anchor=(1.74 / width, 1 - head / height), **legend)
+            ax.set_xlabel(x_labels[k], color=pf.INK_2, fontsize=c.fs(8))
+    fig.legend(ncol=ncol, bbox_to_anchor=((left - 0.06) / width, 1 - head / height), **legend)
     c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_bars.png", args.config, folder=c.PROFILES)
 
     if not together:
         # the net global effect on its own, lined up with the bars: their width, labels' column, panels, fonts and
         # bars' height, so the two can be stacked on a slide
         fig = plt.figure(figsize=(width, 1), facecolor=pf.SURFACE)
-        head = heading(fig, 1.8, f"{title}: net global effect",
+        head = heading(fig, left, f"{title}: net global effect",
                        f"All {name(iso)} spares (left) and all it leaks (right), summed over every location, and the "
                        f"net change (dot), in {'each metric' if several else 'the metric'}'s units per kg displaced"
                        + (f", with whiskers from the {span} over the draws." if drawn else "."))
         # above the panels, the metric's name over the net (on two lines with the whiskers' range), in points
-        titles = 10 * 1.2 + 7 + 8.5 * (1.2 + (1.4 if drawn else 0))
-        margin = head + 0.15 + titles / 72  # over the panels, in inches
-        height = margin + row + 0.58
+        titles = (10 * 1.2 + 7 + 8.5 * (1.2 + 1.4 * note_lines)) * SCALE
+        margin = head + 0.15 * SCALE + titles / 72  # over the panels, in inches
+        height = margin + row + under
         fig.set_figheight(height)
-        grid = fig.add_gridspec(1, len(metrics), wspace=0.08, left=1.8 / width, right=1 - 0.24 / width,
-                                top=1 - margin / height, bottom=0.58 / height)
+        grid = fig.add_gridspec(1, len(metrics), wspace=wspace, left=left / width, right=1 - right / width,
+                                top=1 - margin / height, bottom=under / height)
         renderer = fig.canvas.get_renderer()
-        for j, k in enumerate(metrics):
-            ax, note = world_axes(fig.add_subplot(grid[0, j]), k, powers[k], first=not j)
-            # just over the net, however tall it is
-            ax.set_title(c.SHORT[k], color=pf.INK, fontsize=10, loc="left",
-                         pad=7 + note.get_window_extent(renderer).height * 72 / fig.dpi)
+        panels = [world_axes(fig.add_subplot(grid[0, j]), k, powers[k], first=not j) for j, k in enumerate(metrics)]
+        # the metrics' names in a row, just over the tallest net, however tall (its lines can differ between panels)
+        tallest = max(note.get_window_extent(renderer).height for _, note in panels) * 72 / fig.dpi
+        for (ax, _), k in zip(panels, metrics):
+            ax.set_title(c.SHORT[k], color=pf.INK, fontsize=c.fs(10), loc="left", pad=7 * SCALE + tallest)
         c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_neteffect.png", args.config, folder=c.PROFILES)
 
     # the shares: of the production that replaces C's, against of the impact that leaks, per location (or group)
     unit_noun = noun if args.groups else "location"
-    # 0.78 inches for the axis labels and 4.1 for each panel
-    width = max(0.7 + 4.1 * len(metrics), 6)
+    # 4.1 inches for each panel, with 0.78 left of them for the axis' labels and 0.13 right for the last tick label,
+    # which grow with the --font-scale
+    left, right = 0.78 * SCALE, 0.13 * SCALE
+    width = max(4.1 * len(metrics) - 0.21, 5.09) + left + right
     fig = plt.figure(figsize=(width, 1), facecolor=pf.SURFACE)
-    head = heading(fig, 0.78, f"{title}: where the production goes against where the impact goes",
+    head = heading(fig, left, f"{title}: where the production goes against where the impact goes",
                    (f"One point per World Bank {noun} abroad ({name(iso)}'s own without it), and "
                     f"{name(iso)} in orange." if args.groups else f"One point per location, {name(iso)} in orange.")
                    + f" Above the dashed y = x line, {'an' if unit_noun[0] in 'aeiou' else 'a'} {unit_noun} takes "
                    "more of the impact than of the production.")
-    height = head + 4.27
+    # 3.43 inches of panels, under 0.3 for their titles and over 0.54 for their tick labels and axis' label, on as
+    # many lines as keep it within a panel's width
+    wspace = 0.06 * SCALE
+    panel = (width - left - right) / (len(metrics) + (len(metrics) - 1) * wspace)
+    x_text = fitted(fig, ["Share of the", " replacing production (kg)"], c.fs(8.5), panel)
+    under = (0.54 + 0.17 * x_text.count("\n")) * SCALE
+    height = head + 0.3 * SCALE + 3.43 + under
     fig.set_figheight(height)
     axes = fig.subplots(1, len(metrics), sharex=True, sharey=True, squeeze=False)[0]
     # laid out before the labels, which are placed where they fit
-    fig.subplots_adjust(left=0.78 / width, right=1 - 0.13 / width, top=1 - (head + 0.3) / height,
-                        bottom=0.54 / height, wspace=0.06)
+    fig.subplots_adjust(left=left / width, right=1 - right / width, top=1 - (head + 0.3 * SCALE) / height,
+                        bottom=under / height, wspace=wspace)
     for ax, k in zip(axes, metrics):
         c.new_axes(ax)
         ax.set_xscale("log")
@@ -436,8 +544,8 @@ for iso in args.countries:
                    for j in sorted(np.flatnonzero(shown), key=lambda j: -share[j])])
         ax.xaxis.set_major_formatter(percent)
         ax.yaxis.set_major_formatter(percent)
-        ax.set_title(c.SHORT[k], color=pf.INK, fontsize=10, loc="left")
-        ax.set_xlabel("Share of the replacing production (kg)", color=pf.INK_2, fontsize=8.5)
+        ax.set_title(c.SHORT[k], color=pf.INK, fontsize=c.fs(10), loc="left")
+        ax.set_xlabel(x_text, color=pf.INK_2, fontsize=c.fs(8.5))
         hidden = (~shown & ~feed_only).sum()
         notes = ([f"{hidden} {unit_noun}{'s' if hidden > 1 else ''} below {args.floor:.2%} or negative"] if hidden
                  else [])
@@ -445,6 +553,6 @@ for iso in args.countries:
             notes.append(f"{feed_only.sum()} growing only feed, with {share[feed_only].sum():.1%} of the impact")
         if notes:
             ax.text(0.98, 0.02, "not shown: " + ",\nand ".join(notes), transform=ax.transAxes, ha="right",
-                    va="bottom", fontsize=7, color=pf.INK_2)
-    axes[0].set_ylabel("Share of the impact leaked", color=pf.INK_2, fontsize=8.5)
+                    va="bottom", fontsize=c.fs(7), color=pf.INK_2)
+    axes[0].set_ylabel("Share of the impact leaked", color=pf.INK_2, fontsize=c.fs(8.5))
     c.save(fig, f"profile_{iso}_{c.stem(m)}{suffix}_shares.png", args.config, folder=c.PROFILES)
