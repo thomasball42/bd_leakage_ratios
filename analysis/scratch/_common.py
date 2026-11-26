@@ -70,7 +70,8 @@ FLOWS, PROFILES, VS_ATTRIBUTES = "flows", "profiles", "vs_attributes"
 FOLDERS = {
     FLOWS: "the leakage between groups and between countries (group_flows.py, country_flows.py), and every "
            "country's leakage abroad at once (flow_chord.py, flow_map.py)",
-    PROFILES: "where one country's leakage goes (country_profile.py)",
+    PROFILES: "where one country's leakage goes (country_profile.py, country_flow_map.py), and "
+              "its trade (country_trade_map.py)",
     VS_ATTRIBUTES: "the countries' leakage against their GDP per capita and self-sufficiency (leakage_vs_axes.py, "
                    "destination_gdp.py)",
 }
